@@ -1,37 +1,5 @@
-/////////////////////////////////////////////////////////////////////////////
-//
-// Copyright (c) 2020, The Regents of the University of California
-// All rights reserved.
-//
-// BSD 3-Clause License
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021-2025, The OpenROAD Authors
 
 #include "staGui.h"
 
@@ -44,9 +12,11 @@
 #include <QPushButton>
 #include <QStandardItemModel>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include "dbDescriptors.h"
 #include "db_sta/dbNetwork.hh"
@@ -77,16 +47,14 @@ const Painter::Color TimingPathRenderer::capture_clock_color_
 static QString convertDelay(float time, sta::Unit* convert)
 {
   if (sta::delayInf(time)) {
-    const QString infinity = "∞";
+    QString infinity = "∞";
 
     if (time < 0) {
       return "-" + infinity;
-    } else {
-      return infinity;
     }
-  } else {
-    return convert->asString(time);
+    return infinity;
   }
+  return convert->asString(time);
 }
 
 /////////
@@ -443,11 +411,8 @@ bool TimingPathDetailModel::shouldHide(const QModelIndex& index) const
 
   if (row >= last_clock) {
     return false;
-  } else {
-    return !expand_clock_;
   }
-
-  return false;
+  return !expand_clock_;
 }
 
 Qt::ItemFlags TimingPathDetailModel::flags(const QModelIndex& index) const
@@ -709,9 +674,8 @@ void TimingConeRenderer::setPin(const sta::Pin* pin, bool fanin, bool fanout)
   if (pin == nullptr || (!fanin_ && !fanout_)) {
     Gui::get()->unregisterRenderer(this);
     return;
-  } else {
-    Gui::get()->registerRenderer(this);
   }
+  Gui::get()->registerRenderer(this);
 
   QApplication::setOverrideCursor(Qt::WaitCursor);
 
@@ -1294,9 +1258,8 @@ const sta::Pin* TimingControlsDialog::convertTerm(Gui::odbTerm term) const
 
   if (std::holds_alternative<odb::dbITerm*>(term)) {
     return network->dbToSta(std::get<odb::dbITerm*>(term));
-  } else {
-    return network->dbToSta(std::get<odb::dbBTerm*>(term));
   }
+  return network->dbToSta(std::get<odb::dbBTerm*>(term));
 }
 
 void TimingControlsDialog::setThruPin(
@@ -1355,6 +1318,7 @@ const std::vector<std::set<const sta::Pin*>> TimingControlsDialog::getThruPins()
     const
 {
   std::vector<std::set<const sta::Pin*>> pins;
+  pins.reserve(thru_.size());
   for (auto* row : thru_) {
     pins.push_back(row->getPins());
   }

@@ -1,5 +1,9 @@
 #include "ScanCellMock.hh"
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "ClockDomain.hh"
 
 namespace dft {
@@ -27,6 +31,11 @@ void ScanCellMock::connectScanIn(const ScanDriver& pin) const
 
 void ScanCellMock::connectScanOut(const ScanLoad& pin) const
 {
+}
+
+ScanLoad ScanCellMock::getScanIn() const
+{
+  return ScanLoad(static_cast<odb::dbBTerm*>(nullptr));
 }
 
 ScanDriver ScanCellMock::getScanOut() const

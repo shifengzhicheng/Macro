@@ -1,41 +1,17 @@
-/////////////////////////////////////////////////////////////////////////////
-//
-// BSD 3-Clause License
-//
-// Copyright (c) 2023, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2023-2025, The OpenROAD Authors
 
 #include "pad/ICeWall.h"
 
+#include <algorithm>
 #include <boost/icl/interval_set.hpp>
+#include <cmath>
+#include <limits>
+#include <map>
+#include <memory>
+#include <set>
+#include <utility>
+#include <vector>
 
 #include "RDLGui.h"
 #include "RDLRouter.h"
@@ -585,14 +561,29 @@ void ICeWall::placePad(odb::dbMaster* master,
 
   odb::dbTransform orient(odb::dbOrientType::R0);
   if (mirror) {
-    const odb::dbTransform mirror_transform(odb::dbOrientType::MY);
-    orient.concat(mirror_transform);
+    const auto row_edge = getRowEdge(row);
+    switch (row_edge) {
+      case odb::Direction2D::North:
+      case odb::Direction2D::South: {
+        orient.concat({odb::dbOrientType::MY});
+        break;
+      }
+      case odb::Direction2D::West:
+      case odb::Direction2D::East: {
+        if (row->getSite()->getHeight() < row->getSite()->getWidth()) {
+          orient.concat({odb::dbOrientType::MX});
+        } else {
+          orient.concat({odb::dbOrientType::MY});
+        }
+        break;
+      }
+    }
   }
 
   placeInstance(row, snapToRowSite(row, location), inst, orient.getOrient());
 }
 
-odb::int64 ICeWall::estimateWirelengths(
+int64_t ICeWall::estimateWirelengths(
     odb::dbInst* inst,
     const std::set<odb::dbITerm*>& iterms) const
 {
@@ -605,7 +596,7 @@ odb::int64 ICeWall::estimateWirelengths(
     }
   }
 
-  odb::int64 dist = 0;
+  int64_t dist = 0;
 
   for (const auto& [term0, term1] : terms) {
     dist += odb::Point::manhattanDistance(term0->getBBox().center(),
@@ -615,11 +606,11 @@ odb::int64 ICeWall::estimateWirelengths(
   return dist;
 }
 
-odb::int64 ICeWall::computePadBumpDistance(odb::dbInst* inst,
-                                           int inst_width,
-                                           odb::dbITerm* bump,
-                                           odb::dbRow* row,
-                                           int center_pos) const
+int64_t ICeWall::computePadBumpDistance(odb::dbInst* inst,
+                                        int inst_width,
+                                        odb::dbITerm* bump,
+                                        odb::dbRow* row,
+                                        int center_pos) const
 {
   const odb::Point row_center = row->getBBox().center();
   const odb::Point center = bump->getBBox().center();
@@ -635,7 +626,7 @@ odb::int64 ICeWall::computePadBumpDistance(odb::dbInst* inst,
           odb::Point(row_center.x(), center_pos + inst_width / 2), center);
   }
 
-  return std::numeric_limits<odb::int64>::max();
+  return std::numeric_limits<int64_t>::max();
 }
 
 void ICeWall::placePads(const std::vector<odb::dbInst*>& insts, odb::dbRow* row)
@@ -822,7 +813,7 @@ void ICeWall::performPadFlip(
     const auto& pins = find_assignment->second;
     if (pins.size() > 1) {
       // only need to check if pad has more than one connection
-      const odb::int64 start_wirelength = estimateWirelengths(inst, pins);
+      const int64_t start_wirelength = estimateWirelengths(inst, pins);
       const auto start_orient = inst->getOrient();
 
       // try flipping pad
@@ -839,7 +830,7 @@ void ICeWall::performPadFlip(
       }
 
       // get new wirelength
-      const odb::int64 flipped_wirelength = estimateWirelengths(inst, pins);
+      const int64_t flipped_wirelength = estimateWirelengths(inst, pins);
       const bool undo = flipped_wirelength > start_wirelength;
 
       if (undo) {
@@ -1203,9 +1194,8 @@ void ICeWall::placeFiller(
         // sort biggest to smallest
         if (use_height) {
           return r_bbox.dy() > l_bbox.dy();
-        } else {
-          return r_bbox.dx() > l_bbox.dx();
         }
+        return r_bbox.dx() > l_bbox.dx();
       });
 
   const odb::Rect rowbbox = row->getBBox();

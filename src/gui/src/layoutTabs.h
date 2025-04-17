@@ -1,40 +1,12 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2023, Precision Innovations Inc.
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2023-2025, The OpenROAD Authors
 
 #pragma once
 
 #include <QTabWidget>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "gui/gui.h"
 #include "layoutViewer.h"
@@ -58,11 +30,11 @@ class LayoutTabs : public QTabWidget
              const HighlightSet& highlighted,
              const std::vector<std::unique_ptr<Ruler>>& rulers,
              Gui* gui,
-             std::function<bool(void)> usingDBU,
-             std::function<bool(void)> usingPolyDecompView,
-             std::function<bool(void)> showRulerAsEuclidian,
-             std::function<bool(void)> default_mouse_wheel_zoom,
-             std::function<int(void)> arrow_keys_scroll_step,
+             std::function<bool()> usingDBU,
+             std::function<bool()> usingPolyDecompView,
+             std::function<bool()> showRulerAsEuclidian,
+             std::function<bool()> default_mouse_wheel_zoom,
+             std::function<int()> arrow_keys_scroll_step,
              QWidget* parent = nullptr);
 
   LayoutViewer* getCurrent() const { return current_viewer_; }
@@ -142,11 +114,11 @@ class LayoutTabs : public QTabWidget
   const std::vector<std::unique_ptr<Ruler>>& rulers_;
   std::map<odb::dbModule*, LayoutViewer::ModuleSettings> modules_;
   Gui* gui_;
-  std::function<bool(void)> usingDBU_;
-  std::function<bool(void)> usingPolyDecompView_;
-  std::function<bool(void)> showRulerAsEuclidian_;
-  std::function<bool(void)> default_mouse_wheel_zoom_;
-  std::function<int(void)> arrow_keys_scroll_step_;
+  std::function<bool()> usingDBU_;
+  std::function<bool()> usingPolyDecompView_;
+  std::function<bool()> showRulerAsEuclidian_;
+  std::function<bool()> default_mouse_wheel_zoom_;
+  std::function<int()> arrow_keys_scroll_step_;
   utl::Logger* logger_;
   bool command_executing_ = false;
 

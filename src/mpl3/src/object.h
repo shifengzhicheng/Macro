@@ -37,6 +37,7 @@
 
 #include <iostream>
 #include <map>
+#include <unordered_set>
 #include <random>
 #include <set>
 #include <string>
@@ -69,8 +70,6 @@ class SoftMacro;
 class Cluster;
 
 using UniqueClusterVector = std::vector<std::unique_ptr<Cluster>>;
-using mapModule2InstVec = std::map<Cluster*, std::vector<odb::dbInst*>>;
-using pairModuleInstVec = std::pair<Cluster*, std::vector<odb::dbInst*>>;
 
 // ****************************************************************************
 // This file includes the basic functions and basic classes for the HierRTLMP
@@ -200,6 +199,15 @@ class Cluster
     if (it != leaf_std_cells_.end()) {
       leaf_std_cells_.erase(it);
     }
+  };
+  void removeLeafInsts(std::vector<odb::dbInst*> toDelete) { 
+    // store to delete element in unordered_set
+    std::unordered_set<odb::dbInst*> delSet(toDelete.begin(), toDelete.end());
+
+    // use erase-remove idiom to filter delSet 
+    leaf_std_cells_.erase(std::remove_if(leaf_std_cells_.begin(), leaf_std_cells_.end(), [&](odb::dbInst* ptr) {
+        return delSet.find(ptr) != delSet.end();
+    }), leaf_std_cells_.end());
   };
   const std::vector<odb::dbInst*> getLeafMacros() const;
   std::vector<HardMacro*> getHardMacros() const;
@@ -788,11 +796,16 @@ struct Rect
     f_y = f_y_;
   }
 
-  bool isValid() const
-  {
-    return (lx > 0.0) && (ly > 0.0) && (ux > 0.0) && (uy > 0.0);
-  }
+  bool isValid() const { return (lx < ux) && (ly < uy); }
 
+  void mergeInit()
+  {
+    lx = std::numeric_limits<float>::max();
+    ly = lx;
+    ux = std::numeric_limits<float>::lowest();
+    uy = ux;
+  }
+  
   void merge(const Rect& rect)
   {
     if (!isValid()) {

@@ -1,46 +1,18 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2021, Andrew Kennings
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021-2025, The OpenROAD Authors
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 #include "detailed_global.h"
 
+#include <algorithm>
 #include <boost/tokenizer.hpp>
+#include <cmath>
+#include <cstddef>
+#include <string>
+#include <vector>
 
 #include "detailed_hpwl.h"
 #include "detailed_manager.h"
+#include "dpl/Objects.h"
 #include "rectangle.h"
 #include "utl/Logger.h"
 
@@ -50,14 +22,11 @@ using utl::DPO;
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-DetailedGlobalSwap::DetailedGlobalSwap(Architecture* arch,
-                                       Network* network,
-                                       RoutingParams* rt)
+DetailedGlobalSwap::DetailedGlobalSwap(Architecture* arch, Network* network)
     : DetailedGenerator("global swap"),
       mgr_(nullptr),
       arch_(arch),
       network_(network),
-      rt_(rt),
       skipNetsLargerThanThis_(100),
       traversal_(0),
       attempts_(0),
@@ -68,8 +37,7 @@ DetailedGlobalSwap::DetailedGlobalSwap(Architecture* arch,
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-DetailedGlobalSwap::DetailedGlobalSwap()
-    : DetailedGlobalSwap(nullptr, nullptr, nullptr)
+DetailedGlobalSwap::DetailedGlobalSwap() : DetailedGlobalSwap(nullptr, nullptr)
 {
 }
 
@@ -98,7 +66,6 @@ void DetailedGlobalSwap::run(DetailedMgr* mgrPtr,
   mgr_ = mgrPtr;
   arch_ = mgr_->getArchitecture();
   network_ = mgr_->getNetwork();
-  rt_ = mgr_->getRoutingParams();
 
   int passes = 1;
   double tol = 0.01;
@@ -172,14 +139,7 @@ void DetailedGlobalSwap::globalSwap()
       continue;
     }
 
-    double delta = hpwlObj.delta(mgr_->getNMoved(),
-                                 mgr_->getMovedNodes(),
-                                 mgr_->getCurLeft(),
-                                 mgr_->getCurBottom(),
-                                 mgr_->getCurOri(),
-                                 mgr_->getNewLeft(),
-                                 mgr_->getNewBottom(),
-                                 mgr_->getNewOri());
+    double delta = hpwlObj.delta(mgr_->getJournal());
 
     nextHpwl = currHpwl - delta;  // -delta is +ve is less.
 
@@ -232,13 +192,13 @@ bool DetailedGlobalSwap::getRange(Node* nd, Rectangle& nodeBbox)
     // We've computed an interval for the pin.  We need to alter it to work for
     // the cell center. Also, we need to avoid going off the edge of the chip.
     nodeBbox.set_xmin(
-        std::min(std::max(xmin, nodeBbox.xmin() - pin->getOffsetX()), xmax));
+        std::min(std::max(xmin, nodeBbox.xmin() - pin->getOffsetX().v), xmax));
     nodeBbox.set_xmax(
-        std::max(std::min(xmax, nodeBbox.xmax() - pin->getOffsetX()), xmin));
+        std::max(std::min(xmax, nodeBbox.xmax() - pin->getOffsetX().v), xmin));
     nodeBbox.set_ymin(
-        std::min(std::max(ymin, nodeBbox.ymin() - pin->getOffsetY()), ymax));
+        std::min(std::max(ymin, nodeBbox.ymin() - pin->getOffsetY().v), ymax));
     nodeBbox.set_ymax(
-        std::max(std::min(ymax, nodeBbox.ymax() - pin->getOffsetY()), ymin));
+        std::max(std::min(ymax, nodeBbox.ymax() - pin->getOffsetY().v), ymin));
 
     // Record the location and pin offset used to generate this point.
 
@@ -284,12 +244,13 @@ bool DetailedGlobalSwap::calculateEdgeBB(Edge* ed, Node* nd, Rectangle& bbox)
 
   int count = 0;
   for (Pin* pin : ed->getPins()) {
-    Node* other = pin->getNode();
+    auto other = pin->getNode();
     if (other == nd) {
       continue;
     }
-    curX = other->getLeft() + 0.5 * other->getWidth() + pin->getOffsetX();
-    curY = other->getBottom() + 0.5 * other->getHeight() + pin->getOffsetY();
+    curX = other->getLeft().v + 0.5 * other->getWidth().v + pin->getOffsetX().v;
+    curY = other->getBottom().v + 0.5 * other->getHeight().v
+           + pin->getOffsetY().v;
 
     bbox.set_xmin(std::min(curX, bbox.xmin()));
     bbox.set_xmax(std::max(curX, bbox.xmax()));
@@ -332,16 +293,16 @@ double DetailedGlobalSwap::delta(Node* ndi, double new_x, double new_y)
     new_box.reset();
 
     for (Pin* pinj : edi->getPins()) {
-      Node* ndj = pinj->getNode();
+      auto ndj = pinj->getNode();
 
-      x = ndj->getLeft() + 0.5 * ndj->getWidth() + pinj->getOffsetX();
-      y = ndj->getBottom() + 0.5 * ndj->getHeight() + pinj->getOffsetY();
+      x = ndj->getLeft().v + 0.5 * ndj->getWidth().v + pinj->getOffsetX().v;
+      y = ndj->getBottom().v + 0.5 * ndj->getHeight().v + pinj->getOffsetY().v;
 
       old_box.addPt(x, y);
 
       if (ndj == ndi) {
-        x = new_x + pinj->getOffsetX();
-        y = new_y + pinj->getOffsetY();
+        x = new_x + pinj->getOffsetX().v;
+        y = new_y + pinj->getOffsetY().v;
       }
 
       new_box.addPt(x, y);
@@ -385,10 +346,11 @@ double DetailedGlobalSwap::delta(Node* ndi, Node* ndj)
       new_box.reset();
 
       for (Pin* pinj : edi->getPins()) {
-        Node* ndj = pinj->getNode();
+        auto ndj = pinj->getNode();
 
-        x = ndj->getLeft() + 0.5 * ndj->getWidth() + pinj->getOffsetX();
-        y = ndj->getBottom() + 0.5 * ndj->getHeight() + pinj->getOffsetY();
+        x = ndj->getLeft().v + 0.5 * ndj->getWidth().v + pinj->getOffsetX().v;
+        y = ndj->getBottom().v + 0.5 * ndj->getHeight().v
+            + pinj->getOffsetY().v;
 
         old_box.addPt(x, y);
 
@@ -398,8 +360,9 @@ double DetailedGlobalSwap::delta(Node* ndi, Node* ndj)
           ndj = nodes[0];
         }
 
-        x = ndj->getLeft() + 0.5 * ndj->getWidth() + pinj->getOffsetX();
-        y = ndj->getBottom() + 0.5 * ndj->getHeight() + pinj->getOffsetY();
+        x = ndj->getLeft().v + 0.5 * ndj->getWidth().v + pinj->getOffsetX().v;
+        y = ndj->getBottom().v + 0.5 * ndj->getHeight().v
+            + pinj->getOffsetY().v;
 
         new_box.addPt(x, y);
       }
@@ -415,8 +378,8 @@ double DetailedGlobalSwap::delta(Node* ndi, Node* ndj)
 ////////////////////////////////////////////////////////////////////////////////
 bool DetailedGlobalSwap::generate(Node* ndi)
 {
-  double yi = ndi->getBottom() + 0.5 * ndi->getHeight();
-  double xi = ndi->getLeft() + 0.5 * ndi->getWidth();
+  double yi = ndi->getBottom().v + 0.5 * ndi->getHeight().v;
+  double xi = ndi->getLeft().v + 0.5 * ndi->getWidth().v;
 
   // Determine optimal region.
   Rectangle_d bbox;
@@ -436,26 +399,26 @@ bool DetailedGlobalSwap::generate(Node* ndi)
   // get into the optimal region.
   int dispX, dispY;
   mgr_->getMaxDisplacement(dispX, dispY);
-  Rectangle_d lbox(ndi->getLeft() - dispX,
-                   ndi->getBottom() - dispY,
-                   ndi->getLeft() + dispX,
-                   ndi->getBottom() + dispY);
+  Rectangle_d lbox(ndi->getLeft().v - dispX,
+                   ndi->getBottom().v - dispY,
+                   ndi->getLeft().v + dispX,
+                   ndi->getBottom().v + dispY);
   if (lbox.xmax() <= bbox.xmin()) {
-    bbox.set_xmin(ndi->getLeft());
+    bbox.set_xmin(ndi->getLeft().v);
     bbox.set_xmax(lbox.xmax());
   } else if (lbox.xmin() >= bbox.xmax()) {
     bbox.set_xmin(lbox.xmin());
-    bbox.set_xmax(ndi->getLeft());
+    bbox.set_xmax(ndi->getLeft().v);
   } else {
     bbox.set_xmin(std::max(bbox.xmin(), lbox.xmin()));
     bbox.set_xmax(std::min(bbox.xmax(), lbox.xmax()));
   }
   if (lbox.ymax() <= bbox.ymin()) {
-    bbox.set_ymin(ndi->getBottom());
+    bbox.set_ymin(ndi->getBottom().v);
     bbox.set_ymax(lbox.ymax());
   } else if (lbox.ymin() >= bbox.ymax()) {
     bbox.set_ymin(lbox.ymin());
-    bbox.set_ymax(ndi->getBottom());
+    bbox.set_ymax(ndi->getBottom().v);
   } else {
     bbox.set_ymin(std::max(bbox.ymin(), lbox.ymin()));
     bbox.set_ymax(std::min(bbox.ymax(), lbox.ymax()));
@@ -467,14 +430,14 @@ bool DetailedGlobalSwap::generate(Node* ndi)
   int si = mgr_->getReverseCellToSegs(ndi->getId())[0]->getSegId();
 
   // Position target so center of cell at center of box.
-  int xj = (int) std::floor(0.5 * (bbox.xmin() + bbox.xmax())
-                            - 0.5 * ndi->getWidth());
-  int yj = (int) std::floor(0.5 * (bbox.ymin() + bbox.ymax())
-                            - 0.5 * ndi->getHeight());
+  DbuX xj{(int) std::floor(0.5 * (bbox.xmin() + bbox.xmax())
+                           - 0.5 * ndi->getWidth().v)};
+  DbuY yj{(int) std::floor(0.5 * (bbox.ymin() + bbox.ymax())
+                           - 0.5 * ndi->getHeight().v)};
 
   // Row and segment for the destination.
   int rj = arch_->find_closest_row(yj);
-  yj = arch_->getRow(rj)->getBottom();  // Row alignment.
+  yj = DbuY{arch_->getRow(rj)->getBottom()};  // Row alignment.
   int sj = -1;
   for (int s = 0; s < mgr_->getNumSegsInRow(rj); s++) {
     DetailedSeg* segPtr = mgr_->getSegsInRow(rj)[s];
@@ -486,7 +449,7 @@ bool DetailedGlobalSwap::generate(Node* ndi)
   if (sj == -1) {
     return false;
   }
-  if (ndi->getRegionId() != mgr_->getSegment(sj)->getRegId()) {
+  if (ndi->getGroupId() != mgr_->getSegment(sj)->getRegId()) {
     return false;
   }
 
@@ -508,7 +471,6 @@ void DetailedGlobalSwap::init(DetailedMgr* mgr)
   mgr_ = mgr;
   arch_ = mgr->getArchitecture();
   network_ = mgr->getNetwork();
-  rt_ = mgr->getRoutingParams();
 
   traversal_ = 0;
   edgeMask_.resize(network_->getNumEdges());
@@ -525,7 +487,6 @@ bool DetailedGlobalSwap::generate(DetailedMgr* mgr,
   mgr_ = mgr;
   arch_ = mgr->getArchitecture();
   network_ = mgr->getNetwork();
-  rt_ = mgr->getRoutingParams();
 
   Node* ndi = candidates[mgr_->getRandom(candidates.size())];
 

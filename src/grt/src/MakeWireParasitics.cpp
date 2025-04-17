@@ -1,44 +1,18 @@
-/////////////////////////////////////////////////////////////////////////////
-//
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #include "MakeWireParasitics.h"
 
+#include <cmath>
+#include <cstddef>
+#include <set>
+#include <utility>
+#include <vector>
+
+#include "db_sta/SpefWriter.hh"
 #include "db_sta/dbNetwork.hh"
 #include "db_sta/dbSta.hh"
 #include "rsz/Resizer.hh"
-#include "rsz/SpefWriter.hh"
 #include "sta/ArcDelayCalc.hh"
 #include "sta/Corner.hh"
 #include "sta/Parasitics.hh"
@@ -78,7 +52,7 @@ MakeWireParasitics::MakeWireParasitics(utl::Logger* logger,
 void MakeWireParasitics::estimateParasitcs(odb::dbNet* net,
                                            std::vector<Pin>& pins,
                                            GRoute& route,
-                                           rsz::SpefWriter* spef_writer)
+                                           sta::SpefWriter* spef_writer)
 {
   debugPrint(logger_, GRT, "est_rc", 1, "net {}", net->getConstName());
   if (logger_->debugCheck(GRT, "est_rc", 2)) {
@@ -170,8 +144,8 @@ sta::Pin* MakeWireParasitics::staPin(Pin& pin) const
 {
   if (pin.isPort())
     return network_->dbToSta(pin.getBTerm());
-  else
-    return network_->dbToSta(pin.getITerm());
+
+  return network_->dbToSta(pin.getITerm());
 }
 
 void MakeWireParasitics::makeRouteParasitics(
@@ -190,7 +164,8 @@ void MakeWireParasitics::makeRouteParasitics(
     const int wire_length_dbu = segment.length();
 
     const int init_layer = segment.init_layer;
-    sta::ParasiticNode* n1 = (init_layer >= min_routing_layer)
+    bool is_valid_layer = init_layer >= min_routing_layer;
+    sta::ParasiticNode* n1 = is_valid_layer
                                  ? ensureParasiticNode(segment.init_x,
                                                        segment.init_y,
                                                        init_layer,
@@ -200,7 +175,8 @@ void MakeWireParasitics::makeRouteParasitics(
                                  : nullptr;
 
     const int final_layer = segment.final_layer;
-    sta::ParasiticNode* n2 = (final_layer >= min_routing_layer)
+    is_valid_layer = final_layer >= min_routing_layer;
+    sta::ParasiticNode* n2 = is_valid_layer
                                  ? ensureParasiticNode(segment.final_x,
                                                        segment.final_y,
                                                        final_layer,

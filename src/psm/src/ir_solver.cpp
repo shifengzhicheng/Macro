@@ -1,41 +1,20 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2024, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2024-2025, The OpenROAD Authors
 
 #include "ir_solver.h"
 
 #include <Eigen/SparseLU>
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <list>
+#include <map>
+#include <memory>
+#include <optional>
 #include <queue>
+#include <set>
+#include <utility>
+#include <vector>
 
 #include "connection.h"
 #include "db_sta/dbNetwork.hh"
@@ -59,6 +38,7 @@ IRSolver::IRSolver(
     rsz::Resizer* resizer,
     utl::Logger* logger,
     const std::map<odb::dbNet*, std::map<sta::Corner*, Voltage>>& user_voltages,
+    const std::map<odb::dbInst*, std::map<sta::Corner*, Power>>& user_powers,
     const PDNSim::GeneratedSourceSettings& generated_source_settings)
     : net_(net),
       logger_(logger),
@@ -67,6 +47,7 @@ IRSolver::IRSolver(
       network_(new IRNetwork(net_, logger_, floorplanning)),
       gui_(nullptr),
       user_voltages_(user_voltages),
+      user_powers_(user_powers),
       generated_source_settings_(generated_source_settings)
 {
 }
@@ -126,7 +107,7 @@ PDNSim::IRDropByPoint IRSolver::getIRDrop(odb::dbTechLayer* layer,
   return ir_drop;
 }
 
-bool IRSolver::check()
+bool IRSolver::check(bool check_bterms)
 {
   const utl::DebugScopedTimer timer(logger_, utl::PSM, "timer", 1, "Check: {}");
   if (connected_.has_value()) {
@@ -135,6 +116,10 @@ bool IRSolver::check()
 
   // set to true and unset if it failed
   connected_ = true;
+  if (check_bterms && !checkBTerms()) {
+    reportMissingBTerm();
+    connected_ = false;
+  }
   if (!checkOpen()) {
     reportUnconnectedNodes();
     connected_ = false;
@@ -224,6 +209,28 @@ bool IRSolver::checkOpen()
   }
 
   return true;
+}
+
+bool IRSolver::checkBTerms() const
+{
+  const utl::DebugScopedTimer timer(
+      logger_, utl::PSM, "timer", 1, "Check bterm: {}");
+
+  for (odb::dbBTerm* bterm : net_->getBTerms()) {
+    for (odb::dbBPin* bpin : bterm->getBPins()) {
+      if (bpin->getPlacementStatus().isPlaced()) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+void IRSolver::reportMissingBTerm() const
+{
+  logger_->error(
+      utl::PSM, 25, "{} does not contain any terminals", net_->getName());
 }
 
 IRSolver::ConnectivityResults IRSolver::getConnectivityResults() const
@@ -325,6 +332,28 @@ bool IRSolver::checkShort() const
 
   // Dummy implementation of short
   return true;
+}
+
+void IRSolver::assertResistanceMap(sta::Corner* corner) const
+{
+  const auto required_layers = network_->getLayers();
+  bool error = false;
+  for (const auto& [layer, res] : getResistanceMap(corner)) {
+    if (required_layers.find(layer) == required_layers.end()) {
+      continue;
+    }
+
+    if (res == 0.0
+        && (layer->getType() == odb::dbTechLayerType::CUT
+            || layer->getType() == odb::dbTechLayerType::ROUTING)) {
+      logger_->warn(utl::PSM, 20, "{} has zero resistance.", layer->getName());
+      error = true;
+    }
+  }
+
+  if (error) {
+    logger_->error(utl::PSM, 21, "Resistance map constains invalid values.");
+  }
 }
 
 Connection::ResistanceMap IRSolver::getResistanceMap(sta::Corner* corner) const
@@ -768,6 +797,28 @@ void IRSolver::buildNodeCurrentMap(sta::Corner* corner,
       currents[node] += current / nodes.size();
     }
   }
+
+  for (const auto& [inst, powers] : user_powers_) {
+    auto find_inst = inst_nodes.find(inst);
+    if (find_inst == inst_nodes.end()) {
+      continue;
+    }
+
+    auto find_power = powers.find(corner);
+    if (find_power == powers.end()) {
+      find_power = powers.find(nullptr);
+    }
+
+    if (find_power == powers.end()) {
+      continue;
+    }
+
+    const Current current = find_power->second / power_voltage;
+    const auto& nodes = find_inst->second;
+    for (auto* node : nodes) {
+      currents[node] += current / nodes.size();
+    }
+  }
 }
 
 std::map<Node*, Connection::ConnectionSet> IRSolver::getNodeConnectionMap(
@@ -904,6 +955,8 @@ void IRSolver::solve(sta::Corner* corner,
     network_->setFloorplanning(false);
     network_->construct();
   }
+
+  assertResistanceMap(corner);
 
   // Reset
   auto& voltages = voltages_[corner];

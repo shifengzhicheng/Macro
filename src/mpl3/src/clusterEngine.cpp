@@ -31,12 +31,13 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ///////////////////////////////////////////////////////////////////////////////
 
-#include "leidenClustering.h" 
 #include "clusterEngine.h"
-#include <fmt/core.h>
+#include "optimiser.h"
 #include "db_sta/dbNetwork.hh"
+#include "leidenClustering.h"
 #include "par/PartitionMgr.h"
 #include "sta/Liberty.hh"
+#include <iterator>
 
 namespace mpl3 {
 using utl::MPL;
@@ -57,11 +58,12 @@ void ClusteringEngine::buildLogicalHierarchy()
   logger_->report("Building logical hierarchy...");
   odb::dbModule* top_module = block_->getTopModule();
   logical_tree_ = std::make_unique<LogicalHierarchy>(logger_);
-  std::unique_ptr<Cluster> root = std::make_unique<Cluster>(0, top_module->getHierarchicalName(), logger_);
+  std::unique_ptr<Cluster> root = std::make_unique<Cluster>(
+      0, top_module->getHierarchicalName(), logger_);
   logical_tree_->setRoot(std::move(root));
   // DFS logical hierarchy and build logical hierarchy with Cluster
   logical_tree_->buildLogicalHierarchyDFS(top_module, logical_tree_->getRoot());
-  if (logger_->debugCheck(MPL, "multilevel_autoclustering", 1)) {
+  if (logger_->debugCheck(MPL, "build_logical_hierarchy", 1)) {
     logger_->report("\nPrint Logical Hierarchy\n");
     logical_tree_->printLogicalHierarchyTree(logical_tree_->getRoot(), 0);
   }
@@ -70,8 +72,8 @@ void ClusteringEngine::buildLogicalHierarchy()
 void ClusteringEngine::run()
 {
   buildLogicalHierarchy();
-  top_module_ = refineLogicalHierarchy();
-
+  top_module_ = refineLogicalHierarchy(logical_tree_->getRoot());
+  // top_module_ = logical_tree_->getRoot();
   design_metrics_ = computeModuleMetrics(top_module_);
   init();
 
@@ -108,67 +110,220 @@ void ClusteringEngine::run()
   }
 }
 
-Cluster* ClusteringEngine::refineLogicalHierarchy()
+Cluster* ClusteringEngine::refineLogicalHierarchy(Cluster* top_module)
 {
-  // every module would contain multiple instances in a leiden cluster 
-
+  // Initialize Leiden clustering
   std::unique_ptr<leidenClustering> leiden_clustering
       = std::make_unique<leidenClustering>(network_, block_, logger_);
-  bool create_new_vertex_id = true;
-  leiden_clustering->init(create_new_vertex_id);
+  leiden_clustering->init(true);
+  leiden_clustering->set_large_net_threshold(tree_->large_net_threshold);
+  leiden_clustering->set_random_seed(0);
   leiden_clustering->run();
+
   std::vector<int>& partition = leiden_clustering->get_partition();
   size_t cluster_count = leiden_clustering->get_cluster_count();
   std::vector<std::vector<odb::dbInst*>> leiden_clusters(cluster_count);
+
+  // Assign instances to clusters
   for (auto inst : block_->getInsts()) {
     auto master = inst->getMaster();
-    if (isIgnoredMaster(master) || master->isBlock()) {
-      continue;
-    }
-    else {
-      int vertex_id = odb::dbIntProperty::find(inst, "leiden_vertex_id")->getValue();
+    if (!isIgnoredMaster(master) && !master->isBlock()) {
+      int vertex_id
+          = odb::dbIntProperty::find(inst, "leiden_vertex_id")->getValue();
       leiden_clusters[partition[vertex_id]].push_back(inst);
     }
   }
+  // std::reverse(leiden_clusters.begin(), leiden_clusters.end());
+  // Define thresholds for small clusters and modules
+  std::vector<size_t> cluster_sizes;
+  for (const auto& cluster : leiden_clusters) {
+    if (cluster.size() != 0) {
+      cluster_sizes.push_back(cluster.size());
+    }
+  }
 
-  Cluster* top_module = logical_tree_->getRoot();
+  // mean
+  // int mean_size
+  //     = std::accumulate(cluster_sizes.begin(), cluster_sizes.end(), 0.0)
+  //       / cluster_sizes.size();
+  int small_leiden_cluster_threshold;
+  // small_leiden_cluster_threshold = static_cast<int>(mean_size);
+  small_leiden_cluster_threshold = 1000;
+  debugPrint(logger_,
+             MPL,
+             "build_logical_hierarchy",
+             1,
+             "small cluster threshold: {}",
+             small_leiden_cluster_threshold);
+  logical_tree_->setLargeNetThreshold(tree_->large_net_threshold);
 
-  int small_leiden_cluster_threshold = 50;
-  int small_module_threshold = 1000;
+  struct SizeCmp
+  {
+    LogicalHierarchy* logical_tree;
+    bool operator()(const Cluster* a, const Cluster* b) const
+    {
+      return logical_tree->getRecursiveClusterStdCellsSize(a)
+             < logical_tree->getRecursiveClusterStdCellsSize(b);
+    }
+  };
+  SizeCmp cmp;
 
-  for (auto &cluster : leiden_clusters) {
+  for (int idx = 0; idx < leiden_clusters.size(); idx++) {
+    // Skip clusters that are too small
+    auto& cluster = leiden_clusters[idx];
     if (cluster.size() < small_leiden_cluster_threshold) {
       continue;
     }
-
-    mapModule2InstVec map_module2inst_vec = logical_tree_->findModulesForCluster(cluster);
-    if (map_module2inst_vec.size() == 1) {
+    debugPrint(logger_,
+               MPL,
+               "build_logical_hierarchy",
+               1,
+               "leinden cluster size: {}",
+               cluster.size());
+    // Find the mapping from module to instance vector for the given cluster
+    auto map_module2inst_vec = logical_tree_->findModulesForCluster(cluster);
+    if (map_module2inst_vec.empty()) {
+      continue;
+    }
+    // If there's only one module, directly create a child module for it using
+    // the cluster
+    else if (map_module2inst_vec.size() == 1) {
       Cluster* module = map_module2inst_vec.begin()->first;
-      logical_tree_->createChildModuleForModule(module, cluster);
-    } else {
-      std::vector<pairModuleInstVec> small_candidates;
+      if (logger_->debugCheck(MPL, "build_logical_hierarchy", 1)) {
+        debugPrint(
+            logger_,
+            MPL,
+            "build_logical_hierarchy",
+            1,
+            "Cluster corresponds to a single module {}. Creating child module.",
+            module->getName());
+      }
+      if (cluster.size() != (map_module2inst_vec.begin()->second).size()) {
+        logical_tree_->createChildModuleForModule(module, cluster);
+      }
+    }
+    // If there are multiple modules, merge them under their lowest common
+    // ancestor
+    else {
+      // Collect all modules (keys) into a set
+      cmp.logical_tree = logical_tree_.get();
+      std::set<Cluster*, SizeCmp> new_modules(cmp);
+      std::set<Cluster*> new_modules_bak;
       for (auto& [module, inst_vec] : map_module2inst_vec) {
-        if (logical_tree_->getRecursiveClusterStdCellsSize(module) > small_module_threshold && logical_tree_->getRecursiveClusterMacrosSize(module) == 0) {
-          logical_tree_->createChildModuleForModule(module, inst_vec);
-        } else {
-          small_candidates.emplace_back(module, std::move(inst_vec));
+        Cluster* new_module
+            = logical_tree_->createChildModuleForModule(module, inst_vec);
+        new_modules.insert(new_module);
+        new_modules_bak.insert(new_module);
+      }
+      auto connection_map
+          = logical_tree_->getClusterConnectivity(new_modules_bak);
+      // here we want to find whether a sub module should be move to a densely
+      // connected sub module in remote parent
+      // flow: for a cluster, if stay here is better, remove it and insert to
+      // bin pair a, b means a should be merge to b.
+      std::map<Cluster*, Cluster*> merge_pairs;
+      std::map<Cluster*, float> move_gains;
+
+      // Iterate over new_modules to compute and record merge candidate
+      // information
+      for (auto it1 = new_modules.begin(); it1 != new_modules.end(); it1++) {
+        // Measure the move gain for the candidate module
+        move_gains[*it1] = 0;
+        merge_pairs[*it1] = nullptr;
+        auto it2 = it1;
+        it2++;
+        for (; it2 != new_modules.end(); it2++) {
+          if (it2 == it1) {
+            continue;
+          }
+          // Calculate the move gain for the current candidate pair
+          float move_gain
+              = logical_tree_->calMoveGain(*it1, *it2, connection_map);
+          // If move gain >= target, then *it1 should be merged into *it2
+          // (assuming *it2's cluster size is larger than *it1's)
+          float target_gain = move_gains[*it1];
+
+          // Log the evaluation of the current candidate pair with gain values
+          if (logger_->debugCheck(MPL, "build_logical_hierarchy", 1)) {
+            logger_->report(
+              "Evaluating merge candidate: {} vs {} with move_gain = {} "
+              "(target_gain = {})",
+              (*it1)->getName(),
+              (*it2)->getName(),
+              move_gain,
+              target_gain);
+          }
+
+          if (move_gain > target_gain) {
+            merge_pairs[*it1] = *it2;
+            move_gains[*it1] = move_gain;
+          }
         }
       }
 
-      if (!small_candidates.empty()) {
-        std::set<Cluster*> small_modules;
-        std::vector<odb::dbInst*> elements;
-        for (auto& [module, inst_vec] : small_candidates) {
-          small_modules.insert(module);
-          elements.insert(elements.end(), inst_vec.begin(), inst_vec.end());
+      // Log merge_pairs and move_gains information
+      if (logger_->debugCheck(MPL, "build_logical_hierarchy", 1)) {
+        for (const auto& pair : merge_pairs) {
+          logger_->report("Merge pair: {} -> {}",
+                          pair.first->getName(),
+                          pair.second?pair.second->getName():"nullptr");
         }
-        Cluster* lca = logical_tree_->findLCAForModules(small_modules);
-        logical_tree_->mergeModulesAsChild(lca, small_modules);
-        logical_tree_->createChildModuleForModule(lca, elements);
+        for (const auto& entry : move_gains) {
+          logger_->report("Move gain: {} with value {}",
+                          entry.first->getName(),
+                          entry.second);
+        }
+      }
+
+      // Build the merge set map based on merge_pairs
+      std::unordered_map<Cluster*, std::set<Cluster*>> merge_set_map
+          = logical_tree_->buildMergeSetMap(merge_pairs);
+      for (auto& [ultimate_dest, merge_set] : merge_set_map) {
+        if (merge_set.empty()) {
+          // No modules to merge, skip this iteration
+          debugPrint(logger_,
+                     MPL,
+                     "build_logical_hierarchy",
+                     1,
+                     "No modules to merge for ultimate_dest {}",
+                     ultimate_dest->getName());
+          continue;
+        }
+        Cluster* parent = ultimate_dest->getParent();
+        merge_set.insert(ultimate_dest);
+        for (auto module : merge_set) {
+          auto it = new_modules_bak.find(module);
+          if (it != new_modules_bak.end()) {
+            new_modules_bak.erase(it);
+          }
+        }
+        // clear merged modules in new_modules_bak
+        if (logger_->debugCheck(MPL, "build_logical_hierarchy", 1)) {
+          logger_->report("Merging modules into parent: {}",
+                          parent->getName());
+          for (auto child : merge_set) {
+            logger_->report("Child modules: {}", child->getName());
+          }
+        }
+        logical_tree_->mergeModulesAsChild(parent, merge_set);
+      }
+      // release child module smaller than threshold
+      for (auto module : new_modules_bak) {
+        if (logical_tree_->getRecursiveClusterStdCellsSize(module)
+            < small_leiden_cluster_threshold) {
+          debugPrint(logger_,
+                     MPL,
+                     "build_logical_hierarchy",
+                     1,
+                     "Release child module {}",
+                     module->getName());
+          logical_tree_->releaseChildModule(module);
+        }
       }
     }
   }
-  if (logger_->debugCheck(MPL, "multilevel_autoclustering", 1)) {
+  logical_tree_->clearEmptyModules(logical_tree_->getRoot());
+  if (logger_->debugCheck(MPL, "build_logical_hierarchy", 1)) {
     logger_->report("\nPrint Logical Hierarchy\n");
     logical_tree_->printLogicalHierarchyTree(logical_tree_->getRoot(), 0);
   }
@@ -615,7 +770,7 @@ void ClusteringEngine::mapIOPads()
 // Here we model each std cell instance, IO pin and macro pin as vertices.
 void ClusteringEngine::createDataFlow()
 {
-  if (/*design_metrics_->getNumStdCell() != 0 && */!stdCellsHaveLiberty()) {
+  if (/*design_metrics_->getNumStdCell() != 0 && */ !stdCellsHaveLiberty()) {
     logger_->warn(
         MPL,
         14,
@@ -1530,25 +1685,44 @@ void ClusteringEngine::breakLargeFlatCluster(Cluster* parent)
   }
 
   const int seed = 0;
-  const float balance_constraint = 1.0;
+  constexpr float default_balance_constraint = 1.0f;
+  float balance_constraint = default_balance_constraint;
   const int num_parts = 2;  // We use two-way partitioning here
   const int num_vertices = static_cast<int>(vertex_weight.size());
   std::vector<float> hyperedge_weights(hyperedges.size(), 1.0f);
 
-  debugPrint(logger_,
-             MPL,
-             "multilevel_autoclustering",
-             1,
-             "Breaking flat cluster {} with TritonPart",
-             parent->getName());
+  // Due to the discrepancy that may exist between the weight of vertices
+  // that represent macros/std cells, the partitioner may fail to meet the
+  // balance constraint. This may cause the output to be completely unbalanced
+  // and lead to infinite partitioning recursion. To handle that, we relax
+  // the constraint until we find a reasonable split.
+  constexpr float balance_constraint_relaxation_factor = 10.0f;
+  std::vector<int> solution;
+  do {
+    debugPrint(
+        logger_,
+        MPL,
+        "multilevel_autoclustering",
+        1,
+        "Attempting flat cluster {} partitioning with balance constraint = {}",
+        parent->getName(),
+        balance_constraint);
 
-  std::vector<int> part
-      = triton_part_->PartitionKWaySimpleMode(num_parts,
-                                              balance_constraint,
-                                              seed,
-                                              hyperedges,
-                                              vertex_weight,
-                                              hyperedge_weights);
+    if (balance_constraint >= 90) {
+      logger_->error(
+          MPL, 45, "Cannot find a balanced partitioning for the clusters.");
+    }
+
+    solution = triton_part_->PartitionKWaySimpleMode(num_parts,
+                                                     balance_constraint,
+                                                     seed,
+                                                     hyperedges,
+                                                     vertex_weight,
+                                                     hyperedge_weights);
+
+    balance_constraint += balance_constraint_relaxation_factor;
+  } while (partitionerSolutionIsFullyUnbalanced(solution,
+                                                num_other_cluster_vertices));
 
   parent->clearLeafStdCells();
   parent->clearLeafMacros();
@@ -1560,7 +1734,7 @@ void ClusteringEngine::breakLargeFlatCluster(Cluster* parent)
 
   for (int i = num_other_cluster_vertices; i < num_vertices; i++) {
     odb::dbInst* inst = insts[i - num_other_cluster_vertices];
-    if (part[i] == 0) {
+    if (solution[i] == 0) {
       parent->addLeafInst(inst);
     } else {
       cluster_part_1->addLeafInst(inst);
@@ -1577,6 +1751,27 @@ void ClusteringEngine::breakLargeFlatCluster(Cluster* parent)
   // until the size of the cluster is less than max_num_inst_
   breakLargeFlatCluster(parent);
   breakLargeFlatCluster(raw_part_1);
+}
+
+bool ClusteringEngine::partitionerSolutionIsFullyUnbalanced(
+    const std::vector<int>& solution,
+    const int num_other_cluster_vertices)
+{
+  // The partition of the first vertex which represents
+  // an actual macro or std cell.
+  const int first_vertex_partition = solution[num_other_cluster_vertices];
+  const int number_of_vertices = static_cast<int>(solution.size());
+
+  // Skip all the vertices that represent other clusters.
+  for (int vertex_id = num_other_cluster_vertices;
+       vertex_id < number_of_vertices;
+       ++vertex_id) {
+    if (solution[vertex_id] != first_vertex_partition) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // Recursively merge children whose number of std cells and macro
@@ -1954,7 +2149,8 @@ void ClusteringEngine::breakMixedLeaf(Cluster* mixed_leaf)
   }
 }
 
-void ClusteringEngine::createSubLeindenCluster(Cluster* parent, std::vector<int> &partition)
+void ClusteringEngine::createSubLeindenCluster(Cluster* parent,
+                                               std::vector<int>& partition)
 {
   // Create a map to store the new clusters
   std::map<int, Cluster*> new_clusters;
@@ -1973,7 +2169,8 @@ void ClusteringEngine::createSubLeindenCluster(Cluster* parent, std::vector<int>
 
     // If the cluster id is not in the map, create a new cluster
     if (new_clusters.find(cluster_id) == new_clusters.end()) {
-      std::string cluster_name = parent->getName() + "_leiden_" + std::to_string(cluster_id);
+      std::string cluster_name
+          = parent->getName() + "_leiden_" + std::to_string(cluster_id);
       auto new_cluster = std::make_unique<Cluster>(id_, cluster_name, logger_);
       Cluster* cluster = new_cluster.get();
       new_clusters[cluster_id] = cluster;
@@ -2008,19 +2205,23 @@ void ClusteringEngine::createSubLeindenCluster(Cluster* parent, std::vector<int>
   // updateInstancesAssociation(parent);
 }
 
-void ClusteringEngine::mergeLeidenClustering(Cluster* parent, std::vector<int> &partition, std::vector<std::vector<Cluster*>>& mixed_leaves)
+void ClusteringEngine::mergeLeidenClustering(
+    Cluster* parent,
+    std::vector<int>& partition,
+    std::vector<std::vector<Cluster*>>& mixed_leaves)
 {
   // get all the leaf clusters
   if (parent->isLeaf()) {
     return;
   }
-  
+
   std::vector<Cluster*> sister_mixed_leaves;
 
   for (auto& child : parent->getChildren()) {
     updateInstancesAssociation(child.get());
     if (child->isLeaf()) {
-      // here for the leaf node, we need to create cluster for std cells and leave macros not change.
+      // here for the leaf node, we need to create cluster for std cells and
+      // leave macros not change.
       if (child->getNumMacro() == 0) {
         child->setClusterType(StdCellCluster);
       } else {

@@ -1,36 +1,9 @@
-////////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2018, Iowa State University All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice,
-// this list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-// this list of conditions and the following disclaimer in the documentation
-// and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its contributors
-// may be used to endorse or promote products derived from this software
-// without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-////////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2018-2025, The OpenROAD Authors
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 #include "DataType.h"
 #include "FastRoute.h"
@@ -194,14 +167,14 @@ void FastRouteCore::addNeighborPoints(const int netID,
           }
 
         }  // if MazeRoute
-      }    // if not a degraded edge (len>0)
+      }  // if not a degraded edge (len>0)
 
       // add the neighbor of cur node into heapQueue
       heapQueue[queuetail] = nbr;
       queuetail++;
 
     }  // loop i (neigbors for cur node)
-  }    // while heapQueue is not empty
+  }  // while heapQueue is not empty
 }
 
 void FastRouteCore::setupHeap3D(int netID,
@@ -327,7 +300,7 @@ int FastRouteCore::copyGrids3D(std::vector<TreeNode>& treenodes,
       gridsL_n1n2.push_back(n1l);
       cnt++;
     }
-  }     // if n1 is the first node of (n1, n2)
+  }  // if n1 is the first node of (n1, n2)
   else  // n2 is the first node of (n1, n2)
   {
     if (treeedges[edge_n1n2].route.routelen > 0) {
@@ -337,7 +310,7 @@ int FastRouteCore::copyGrids3D(std::vector<TreeNode>& treenodes,
         gridsL_n1n2.push_back(treeedges[edge_n1n2].route.gridsL[i]);
         cnt++;
       }
-    }     // MazeRoute
+    }  // MazeRoute
     else  // NoRoute
     {
       gridsX_n1n2.push_back(n1x);
@@ -1291,7 +1264,7 @@ void FastRouteCore::mazeRouteMSMDOrder3D(int expand,
 
           // treenodes[n1].l = E1l;
           treenodes[n1].assigned = true;
-        }     // if E1 is on (n1, A1) or (n1, A2)
+        }  // if E1 is on (n1, A1) or (n1, A2)
         else  // E1 is not on (n1, A1) or (n1, A2), but on (C1, C2)
         {
           const int C1 = endpt1;
@@ -1368,7 +1341,7 @@ void FastRouteCore::mazeRouteMSMDOrder3D(int expand,
             }
           }
         }  // else E1 is not on (n1, A1) or (n1, A2), but on (C1, C2)
-      }    // n1 is not a pin and E1!=n1
+      }  // n1 is not a pin and E1!=n1
       else {
         newUpdateNodeLayers(treenodes, edge_n1n2, n1a, lastL);
       }
@@ -1447,7 +1420,7 @@ void FastRouteCore::mazeRouteMSMDOrder3D(int expand,
 
           // update position for n2
           treenodes[n2].assigned = true;
-        }     // if E2 is on (n2, B1) or (n2, B2)
+        }  // if E2 is on (n2, B1) or (n2, B2)
         else  // E2 is not on (n2, B1) or (n2, B2), but on (d1_3D, d2_3D)
         {
           const int D1 = endpt1;
@@ -1523,8 +1496,8 @@ void FastRouteCore::mazeRouteMSMDOrder3D(int expand,
               break;
             }
           }
-        }     // else E2 is not on (n2, B1) or (n2, B2), but on (d1_3D,
-              // d2_3D)
+        }  // else E2 is not on (n2, B1) or (n2, B2), but on (d1_3D,
+           // d2_3D)
       } else  // n2 is not a pin and E2!=n2
       {
         newUpdateNodeLayers(treenodes, edge_n1n2, n2a, lastL);

@@ -1,36 +1,14 @@
-/* Authors: Lutong Wang and Bangqi Xu */
-/*
- * Copyright (c) 2019, The Regents of the University of California
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the University nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #pragma once
 
 #include <boost/icl/interval_set.hpp>
 #include <list>
+#include <map>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "frDesign.h"
 
@@ -60,7 +38,10 @@ class Parser
 {
  public:
   // constructors
-  Parser(odb::dbDatabase* dbIn, frDesign* design, Logger* loggerIn);
+  Parser(odb::dbDatabase* dbIn,
+         frDesign* design,
+         Logger* loggerIn,
+         RouterConfiguration* router_cfg);
 
   // others
   void readDesign(odb::dbDatabase*);
@@ -80,7 +61,7 @@ class Parser
   void initSecondaryVias();
   void initRPin();
   auto& getTrackOffsetMap() { return trackOffsetMap_; }
-  std::vector<frTrackPattern*>& getPrefTrackPatterns()
+  std::vector<frTrackPattern*>& computePrefTrackPatterns()
   {
     return prefTrackPatterns_;
   }
@@ -96,7 +77,7 @@ class Parser
   void setDieArea(odb::dbBlock*);
   void setTracks(odb::dbBlock*);
   void setInsts(odb::dbBlock*);
-  void setInst(odb::dbInst*);
+  frInst* setInst(odb::dbInst*);
   void setObstructions(odb::dbBlock*);
   void setBTerms(odb::dbBlock*);
   odb::Rect getViaBoxForTermAboveMaxLayer(odb::dbBTerm* term,
@@ -136,7 +117,7 @@ class Parser
                 bool& foundCenterTracks,
                 bool& hasPolys);
   void checkPins();
-  void getViaRawPriority(frViaDef* viaDef, viaRawPriorityTuple& priority);
+  void getViaRawPriority(const frViaDef* viaDef, viaRawPriorityTuple& priority);
   void initDefaultVias_GF14(const std::string& node);
   void initCutLayerWidth();
   void initConstraintLayerIdx();
@@ -153,14 +134,14 @@ class Parser
   odb::dbDatabase* db_;
   frDesign* design_;
   Logger* logger_;
+  RouterConfiguration* router_cfg_;
   // temporary variables
   int readLayerCnt_;
   odb::dbTechLayer* masterSliceLayer_;
-  std::map<frMaster*,
-           std::map<dbOrientType,
-                    std::map<std::vector<frCoord>,
-                             std::set<frInst*, frBlockObjectComp>>>,
-           frBlockObjectComp>
+  frOrderedIdMap<
+      frMaster*,
+      std::map<dbOrientType,
+               std::map<std::vector<frCoord>, frOrderedIdSet<frInst*>>>>
       trackOffsetMap_;
   std::vector<frTrackPattern*> prefTrackPatterns_;
 };
@@ -178,12 +159,13 @@ class Writer
   frDesign* getDesign() const;
   // others
   void updateDb(odb::dbDatabase* db,
+                RouterConfiguration* router_cfg,
                 bool pin_access = false,
                 bool snapshot = false);
   void updateTrackAssignment(odb::dbBlock* block);
 
  private:
-  void fillConnFigs(bool isTA);
+  void fillConnFigs(bool isTA, int verbose);
   void fillConnFigs_net(frNet* net, bool isTA);
   void mergeSplitConnFigs(std::list<std::shared_ptr<frConnFig>>& connFigs);
   void splitVia_helper(
@@ -198,7 +180,7 @@ class Writer
   void updateDbConn(odb::dbBlock* block, odb::dbTech* db_tech, bool snapshot);
   void writeViaDefToODB(odb::dbBlock* block,
                         odb::dbTech* db_tech,
-                        frViaDef* via);
+                        const frViaDef* via);
   void updateDbAccessPoints(odb::dbBlock* block, odb::dbTech* db_tech);
   void updateDbAccessPoint(odb::dbAccessPoint* db_ap,
                            frAccessPoint* ap,
@@ -220,8 +202,11 @@ class Writer
 class TopLayerBTermHandler
 {
  public:
-  TopLayerBTermHandler(frDesign* design, odb::dbDatabase* db, Logger* logger)
-      : design_(design), db_(db), logger_(logger)
+  TopLayerBTermHandler(frDesign* design,
+                       odb::dbDatabase* db,
+                       Logger* logger,
+                       RouterConfiguration* router_cfg)
+      : design_(design), db_(db), logger_(logger), router_cfg_(router_cfg)
   {
   }
   void processBTermsAboveTopLayer(bool has_routing = false);
@@ -244,5 +229,6 @@ class TopLayerBTermHandler
   frDesign* design_;
   odb::dbDatabase* db_;
   Logger* logger_;
+  RouterConfiguration* router_cfg_;
 };
 }  // namespace drt::io

@@ -1,37 +1,11 @@
-/*
-BSD 3-Clause License
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2025, The OpenROAD Authors
 
-Copyright (c) 2020, The Regents of the University of Minnesota
-
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this
-  list of conditions and the following disclaimer.
-
-* Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer in the documentation
-  and/or other materials provided with the distribution.
-
-* Neither the name of the copyright holder nor the names of its
-  contributors may be used to endorse or promote products derived from
-  this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
 #include "psm/pdnsim.h"
 
+#include <algorithm>
+#include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -95,22 +69,33 @@ void PDNSim::setNetVoltage(odb::dbNet* net, sta::Corner* corner, double voltage)
   voltages[corner] = voltage;
 }
 
+void PDNSim::setInstPower(odb::dbInst* inst, sta::Corner* corner, float power)
+{
+  auto& powers = user_powers_[inst];
+  powers[corner] = power;
+}
+
 void PDNSim::analyzePowerGrid(odb::dbNet* net,
                               sta::Corner* corner,
                               GeneratedSourceType source_type,
                               const std::string& voltage_file,
+                              bool use_prev_solution,
                               bool enable_em,
                               const std::string& em_file,
                               const std::string& error_file,
                               const std::string& voltage_source_file)
 {
-  if (!checkConnectivity(net, false, error_file)) {
+  if (!checkConnectivity(net, false, error_file, false)) {
     return;
   }
 
   last_corner_ = corner;
   auto* solver = getIRSolver(net, false);
-  solver->solve(corner, source_type, voltage_source_file);
+  if (!use_prev_solution || !solver->hasSolution(corner)) {
+    solver->solve(corner, source_type, voltage_source_file);
+  } else {
+    logger_->info(utl::PSM, 11, "Reusing previous solution");
+  }
   solver->report(corner);
 
   heatmap_->setNet(net);
@@ -127,10 +112,11 @@ void PDNSim::analyzePowerGrid(odb::dbNet* net,
 
 bool PDNSim::checkConnectivity(odb::dbNet* net,
                                bool floorplanning,
-                               const std::string& error_file)
+                               const std::string& error_file,
+                               bool require_bterm)
 {
   auto* solver = getIRSolver(net, floorplanning);
-  const bool check = solver->check();
+  const bool check = solver->check(require_bterm);
   solver->writeErrorFile(error_file);
 
   if (debug_gui_enabled_) {
@@ -171,6 +157,7 @@ psm::IRSolver* PDNSim::getIRSolver(odb::dbNet* net, bool floorplanning)
                                         resizer_,
                                         logger_,
                                         user_voltages_,
+                                        user_powers_,
                                         generated_source_settings_);
     addOwner(net->getBlock());
   }

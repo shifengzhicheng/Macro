@@ -1,38 +1,19 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2023, Google LLC
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2023-2025, The OpenROAD Authors
 
 #include "ScanArchitect.hh"
 
+#include <algorithm>
+#include <cstddef>
+#include <map>
+#include <memory>
+#include <optional>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 #include "ClockDomain.hh"
+#include "ClockDomainHash.hh"
 #include "ScanArchitectHeuristic.hh"
 
 namespace dft {
@@ -60,7 +41,7 @@ bool CompareScanCells(const std::unique_ptr<ScanCell>& lhs,
 
 void SortScanCells(std::vector<std::unique_ptr<ScanCell>>& scan_cells)
 {
-  std::sort(scan_cells.begin(), scan_cells.end(), CompareScanCells);
+  std::stable_sort(scan_cells.begin(), scan_cells.end(), CompareScanCells);
 }
 
 }  // namespace
@@ -68,6 +49,21 @@ void SortScanCells(std::vector<std::unique_ptr<ScanCell>>& scan_cells)
 ScanCellsBucket::ScanCellsBucket(utl::Logger* logger) : logger_(logger)
 {
 }
+
+namespace {
+void showBuckets(
+    utl::Logger* logger,
+    const std::unordered_map<size_t, std::vector<std::unique_ptr<ScanCell>>>&
+        buckets)
+{
+  for (auto& bucket : buckets) {
+    debugPrint(logger, utl::DFT, "buckets", 2, "Bucket {}", bucket.first);
+    for (auto& scan_cell : bucket.second) {
+      debugPrint(logger, utl::DFT, "buckets", 2, "\t{}", scan_cell->getName());
+    }
+  }
+}
+};  // namespace
 
 void ScanCellsBucket::init(const ScanArchitectConfig& config,
                            std::vector<std::unique_ptr<ScanCell>>& scan_cells)
@@ -82,6 +78,8 @@ void ScanCellsBucket::init(const ScanArchitectConfig& config,
   for (auto& [hash_domain, scan_cells] : buckets_) {
     SortScanCells(scan_cells);
   }
+
+  showBuckets(logger_, buckets_);
 }
 
 std::unordered_map<size_t, uint64_t>

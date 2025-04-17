@@ -39,7 +39,7 @@ read_verilog $synth_verilog
 link_design $top_module
 read_sdc $sdc_file
 
-set_thread_count [exec getconf _NPROCESSORS_ONLN]
+set_thread_count [cpu_count]
 # Temporarily disable sta's threading due to random failures
 sta::set_thread_count 1
 
@@ -63,8 +63,10 @@ place_pins -random -hor_layers $io_placer_hor_layer -ver_layers $io_placer_ver_l
 ################################################################
 # Macro Placement
 if { [have_macros] } {
-  global_placement -density $global_place_density
-  macro_placement -halo $macro_place_halo -channel $macro_place_channel
+  lassign $macro_place_halo halo_x halo_y
+  set report_dir [make_result_file ${design}_${platform}_rtlmp]
+  rtl_macro_placer -halo_width $halo_x -halo_height $halo_y \
+      -report_directory $report_dir
 }
 
 ################################################################

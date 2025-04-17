@@ -1,38 +1,10 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, Nefelus Inc
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <iosfwd>
 #include <tuple>
 #include <vector>
@@ -77,10 +49,10 @@ class Point
   int y() const { return y_; }
 
   // compute the square distance between two points
-  static int64 squaredDistance(Point p0, Point p1);
+  static int64_t squaredDistance(Point p0, Point p1);
 
   // compute the manhattan distance between two points
-  static int64 manhattanDistance(Point p0, Point p1);
+  static int64_t manhattanDistance(Point p0, Point p1);
 
   friend dbIStream& operator>>(dbIStream& stream, Point& p);
   friend dbOStream& operator<<(dbOStream& stream, const Point& p);
@@ -194,7 +166,7 @@ class Rect
 {
  public:
   Rect() = default;
-  Rect(const Rect& r) = default;
+  Rect(const Rect& other) = default;
   Rect(Point p1, Point p2);
   Rect(int x1, int y1, int x2, int y2);
 
@@ -278,11 +250,18 @@ class Rect
   // Return the point inside rect that is closest to pt.
   Point closestPtInside(Point pt) const;
 
+  // Compute the union of this rectangle and a point.
+  void merge(const Point& p, Rect& result);
+
   // Compute the union of these two rectangles.
   void merge(const Rect& r, Rect& result);
 
   // Compute the union of this rectangle and an octagon.
   void merge(const Oct& o, Rect& result);
+
+  // Compute the union of this rectangle an point.
+  // The result is stored in this rectangle.
+  void merge(const Point& p);
 
   // Compute the union of these two rectangles. The result is stored in this
   // rectangle.
@@ -304,8 +283,8 @@ class Rect
   // Compute the intersection of these two rectangles.
   Rect intersect(const Rect& r) const;
 
-  int64 area() const;
-  int64 margin() const;
+  int64_t area() const;
+  int64_t margin() const;
 
   void printf(FILE* fp, const char* prefix = "");
   void print(const char* prefix = "");
@@ -339,12 +318,17 @@ class Polygon
   bool operator<=(const Polygon& p) const { return !(*this > p); }
   bool operator>=(const Polygon& p) const { return !(*this < p); }
 
+  bool isRect() const;
   Rect getEnclosingRect() const;
   int dx() const { return getEnclosingRect().dx(); }
   int dy() const { return getEnclosingRect().dy(); }
 
   // returns a corrected Polygon with a closed form and counter-clockwise points
   Polygon bloat(int margin) const;
+
+  // Returns the geometric difference between this polygon "a" and polygon "b"
+  // results in a vector of polygons.
+  std::vector<Polygon> difference(Polygon b) const;
 
   friend dbIStream& operator>>(dbIStream& stream, Polygon& p);
   friend dbOStream& operator<<(dbOStream& stream, const Polygon& p);
@@ -431,17 +415,17 @@ inline void Point::rotate270()
   y_ = yp;
 }
 
-inline int64 Point::squaredDistance(Point p0, Point p1)
+inline int64_t Point::squaredDistance(Point p0, Point p1)
 {
-  const int64 dx = p1.x_ - p0.x_;
-  const int64 dy = p1.y_ - p0.y_;
+  const int64_t dx = p1.x_ - p0.x_;
+  const int64_t dy = p1.y_ - p0.y_;
   return dx * dx + dy * dy;
 }
 
-inline int64 Point::manhattanDistance(Point p0, Point p1)
+inline int64_t Point::manhattanDistance(Point p0, Point p1)
 {
-  const int64 dx = std::abs(p1.x_ - p0.x_);
-  const int64 dy = std::abs(p1.y_ - p0.y_);
+  const int64_t dx = std::abs(p1.x_ - p0.x_);
+  const int64_t dy = std::abs(p1.y_ - p0.y_);
   return dx + dy;
 }
 
@@ -642,6 +626,14 @@ inline Point Rect::closestPtInside(const Point pt) const
                std::min(std::max(pt.getY(), yMin()), yMax()));
 }
 
+inline void Rect::merge(const Point& p, Rect& result)
+{
+  result.xlo_ = std::min(xlo_, p.getX());
+  result.ylo_ = std::min(ylo_, p.getY());
+  result.xhi_ = std::max(xhi_, p.getX());
+  result.yhi_ = std::max(yhi_, p.getY());
+}
+
 // Compute the union of these two rectangles.
 inline void Rect::merge(const Rect& r, Rect& result)
 {
@@ -657,6 +649,14 @@ inline void Rect::merge(const Oct& o, Rect& result)
   result.ylo_ = std::min(ylo_, o.yMin());
   result.xhi_ = std::max(xhi_, o.xMax());
   result.yhi_ = std::max(yhi_, o.yMax());
+}
+
+inline void Rect::merge(const Point& p)
+{
+  xlo_ = std::min(xlo_, p.getX());
+  ylo_ = std::min(ylo_, p.getY());
+  xhi_ = std::max(xhi_, p.getX());
+  yhi_ = std::max(yhi_, p.getY());
 }
 
 // Compute the union of these two rectangles.
@@ -730,15 +730,15 @@ inline Rect Rect::intersect(const Rect& r) const
   return result;
 }
 
-inline int64 Rect::area() const
+inline int64_t Rect::area() const
 {
-  return dx() * static_cast<int64>(dy());
+  return dx() * static_cast<int64_t>(dy());
 }
 
-inline int64 Rect::margin() const
+inline int64_t Rect::margin() const
 {
-  const int64 DX = dx();
-  const int64 DY = dy();
+  const int64_t DX = dx();
+  const int64_t DY = dy();
   return DX + DX + DY + DY;
 }
 
@@ -950,6 +950,13 @@ inline Rect Polygon::getEnclosingRect() const
     rect.merge(Rect(pt, pt));
   }
   return rect;
+}
+
+inline bool Polygon::isRect() const
+{
+  // A polygon is a rect if and only if the polygon
+  // of its bounding box is equal to itself.
+  return *this == Polygon(getEnclosingRect());
 }
 
 inline bool Polygon::operator==(const Polygon& p) const

@@ -1,33 +1,14 @@
-/* Authors: Lutong Wang and Bangqi Xu */
-/*
- * Copyright (c) 2019, The Regents of the University of California
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the University nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
+#include <algorithm>
 #include <boost/geometry.hpp>
 #include <iostream>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "frProfileTask.h"
 #include "gc/FlexGC_impl.h"
@@ -194,12 +175,12 @@ bool FlexGCWorker::Impl::isOppositeDir(gcCorner* corner, gcSegment* seg)
 
 box_t FlexGCWorker::Impl::checkMetalCornerSpacing_getQueryBox(
     gcCorner* corner,
-    frCoord& maxSpcValX,
-    frCoord& maxSpcValY)
+    const frCoord maxSpcValX,
+    const frCoord maxSpcValY)
 {
   box_t queryBox;
-  frCoord baseX = corner->getNextEdge()->low().x();
-  frCoord baseY = corner->getNextEdge()->low().y();
+  frCoord baseX = corner->x();
+  frCoord baseY = corner->y();
   frCoord llx = baseX;
   frCoord lly = baseY;
   frCoord urx = baseX;
@@ -268,7 +249,7 @@ frCoord FlexGCWorker::Impl::checkMetalSpacing_prl_getReqSpcVal(gcRect* rect1,
   // override width and spacing
   if (rect1->getNet()->isBlockage()) {
     isObs = true;
-    if (USEMINSPACING_OBS) {
+    if (router_cfg_->USEMINSPACING_OBS) {
       width1 = currLayer->getWidth();
     }
     if (rect1->getNet()->getDesignRuleWidth() != -1) {
@@ -277,7 +258,7 @@ frCoord FlexGCWorker::Impl::checkMetalSpacing_prl_getReqSpcVal(gcRect* rect1,
   }
   if (rect2->getNet()->isBlockage()) {
     isObs = true;
-    if (USEMINSPACING_OBS) {
+    if (router_cfg_->USEMINSPACING_OBS) {
       width2 = currLayer->getWidth();
     }
     if (rect2->getNet()->getDesignRuleWidth() != -1) {
@@ -894,8 +875,9 @@ void FlexGCWorker::Impl::checkMetalSpacing()
           checkMetalSpacing_wrongDir(pin.get(), currLayer);
         }
         for (auto& maxrect : pin->getMaxRectangles()) {
-          checkMetalSpacing_main(maxrect.get(),
-                                 getDRWorker() || !AUTO_TAPER_NDR_NETS);
+          checkMetalSpacing_main(
+              maxrect.get(),
+              getDRWorker() || !router_cfg_->AUTO_TAPER_NDR_NETS);
           if (currLayer->hasTwoWiresForbiddenSpacingConstraints()) {
             for (auto con :
                  currLayer->getTwoWiresForbiddenSpacingConstraints()) {
@@ -911,7 +893,7 @@ void FlexGCWorker::Impl::checkMetalSpacing()
       }
       for (auto& sr : targetNet_->getSpecialSpcRects()) {
         checkMetalSpacing_main(
-            sr.get(), getDRWorker() || !AUTO_TAPER_NDR_NETS, true);
+            sr.get(), getDRWorker() || !router_cfg_->AUTO_TAPER_NDR_NETS, true);
       }
     }
   } else {
@@ -932,8 +914,9 @@ void FlexGCWorker::Impl::checkMetalSpacing()
           }
           for (auto& maxrect : pin->getMaxRectangles()) {
             // Short, NSMetal, metSpc
-            checkMetalSpacing_main(maxrect.get(),
-                                   getDRWorker() || !AUTO_TAPER_NDR_NETS);
+            checkMetalSpacing_main(
+                maxrect.get(),
+                getDRWorker() || !router_cfg_->AUTO_TAPER_NDR_NETS);
             if (currLayer->hasTwoWiresForbiddenSpacingConstraints()) {
               for (auto con :
                    currLayer->getTwoWiresForbiddenSpacingConstraints()) {
@@ -949,7 +932,9 @@ void FlexGCWorker::Impl::checkMetalSpacing()
         }
         for (auto& sr : net->getSpecialSpcRects()) {
           checkMetalSpacing_main(
-              sr.get(), getDRWorker() || !AUTO_TAPER_NDR_NETS, true);
+              sr.get(),
+              getDRWorker() || !router_cfg_->AUTO_TAPER_NDR_NETS,
+              true);
         }
       }
     }
@@ -1380,14 +1365,20 @@ void FlexGCWorker::Impl::checkMetalCornerSpacing()
          i++) {
       auto currLayer = getTech()->getLayer(i);
       if (currLayer->getType() != dbTechLayerType::ROUTING
-          || !currLayer->hasLef58CornerSpacingConstraint()) {
+          || (!currLayer->hasLef58CornerSpacingConstraint()
+              && currLayer->getWidthTblOrthCon() == nullptr)) {
         continue;
       }
       for (auto& pin : targetNet_->getPins(i)) {
         for (auto& corners : pin->getPolygonCorners()) {
           for (auto& corner : corners) {
             // LEF58 corner spacing
-            checkMetalCornerSpacing_main(corner.get());
+            if (currLayer->hasLef58CornerSpacingConstraint()) {
+              checkMetalCornerSpacing_main(corner.get());
+            }
+            if (currLayer->getWidthTblOrthCon()) {
+              checkWidthTableOrth(corner.get());
+            }
           }
         }
       }
@@ -1401,7 +1392,8 @@ void FlexGCWorker::Impl::checkMetalCornerSpacing()
          i++) {
       auto currLayer = getTech()->getLayer(i);
       if (currLayer->getType() != dbTechLayerType::ROUTING
-          || !currLayer->hasLef58CornerSpacingConstraint()) {
+          || (!currLayer->hasLef58CornerSpacingConstraint()
+              && currLayer->getWidthTblOrthCon() == nullptr)) {
         continue;
       }
       for (auto& net : getNets()) {
@@ -1409,12 +1401,89 @@ void FlexGCWorker::Impl::checkMetalCornerSpacing()
           for (auto& corners : pin->getPolygonCorners()) {
             for (auto& corner : corners) {
               // LEF58 corner spacing
-              checkMetalCornerSpacing_main(corner.get());
+              if (currLayer->hasLef58CornerSpacingConstraint()) {
+                checkMetalCornerSpacing_main(corner.get());
+              }
+              if (currLayer->getWidthTblOrthCon()) {
+                checkWidthTableOrth(corner.get());
+              }
             }
           }
         }
       }
     }
+  }
+}
+
+void FlexGCWorker::Impl::checkWidthTableOrth_main(gcCorner* corner1,
+                                                  gcCorner* corner2)
+{
+  if (corner2 == nullptr) {
+    return;
+  }
+  if (corner1 == corner2) {
+    return;
+  }
+  if (corner2->getType() != frCornerTypeEnum::CONCAVE) {
+    return;
+  }
+  if (corner1->isFixed() && corner2->isFixed()) {
+    return;
+  }
+  const auto layer_num = corner1->getLayerNum();
+  const auto layer = getTech()->getLayer(layer_num);
+  const auto con = layer->getWidthTblOrthCon();
+  const frCoord horz_spc = con->getHorzSpc();
+  const frCoord vert_spc = con->getVertSpc();
+
+  Rect marker_rect(corner1->x(), corner1->y(), corner2->x(), corner2->y());
+  if (marker_rect.dx() >= horz_spc || marker_rect.dy() >= vert_spc) {
+    return;
+  }
+  const auto owner = corner1->getPin()->getNet()->getOwner();
+  auto marker = std::make_unique<frMarker>();
+  marker->setBBox(marker_rect);
+  marker->setLayerNum(layer_num);
+  marker->setConstraint(con);
+  marker->addSrc(owner);
+  marker->addVictim(
+      owner,
+      std::make_tuple(
+          layer_num,
+          Rect(corner1->x(), corner1->y(), corner1->x(), corner1->y()),
+          corner1->isFixed()));
+  marker->addAggressor(
+      owner,
+      std::make_tuple(
+          layer_num,
+          Rect(corner2->x(), corner2->y(), corner2->x(), corner2->y()),
+          corner2->isFixed()));
+  addMarker(std::move(marker));
+}
+
+void FlexGCWorker::Impl::checkWidthTableOrth(gcCorner* corner)
+{
+  // applied only to inside corners (CONCAVE)
+  if (corner->getType() != frCornerTypeEnum::CONCAVE) {
+    return;
+  }
+  auto layer_num = corner->getLayerNum();
+  auto layer = getTech()->getLayer(layer_num);
+  auto con = layer->getWidthTblOrthCon();
+  const frCoord horz_spc = con->getHorzSpc();
+  const frCoord vert_spc = con->getVertSpc();
+  Rect query_rect(corner->x() - horz_spc,
+                  corner->y() - vert_spc,
+                  corner->x() + horz_spc,
+                  corner->y() + vert_spc);
+  std::vector<std::pair<segment_t, gcSegment*>> result;
+  getWorkerRegionQuery().queryPolygonEdge(query_rect, layer_num, result);
+  for (auto [_, edge] : result) {
+    if (edge->getPin() != corner->getPin()) {
+      continue;
+    }
+    checkWidthTableOrth_main(corner, edge->getLowCorner());
+    checkWidthTableOrth_main(corner, edge->getHighCorner());
   }
 }
 
@@ -3006,9 +3075,6 @@ void FlexGCWorker::Impl::checkLef58CutSpacing_spc_layer(
     const gtl::rectangle_data<frCoord>& markerRect,
     frLef58CutSpacingConstraint* con)
 {
-  if (rect1->isFixed() && rect2->isFixed()) {
-    return;
-  }
   auto layerNum = rect1->getLayerNum();
   auto secondLayerNum = rect2->getLayerNum();
   auto net1 = rect1->getNet();
@@ -3525,7 +3591,7 @@ void FlexGCWorker::Impl::checkCutSpacing_main(gcRect* rect)
     checkLef58CutSpacingTbl(rect,
                             layer->getLef58DefaultInterCutSpcTblConstraint());
   }
-  if (layer->getLayerNum() + 2 < TOP_ROUTING_LAYER
+  if (layer->getLayerNum() + 2 < router_cfg_->TOP_ROUTING_LAYER
       && layer->getLayerNum() + 2 < getTech()->getLayers().size()) {
     auto aboveLayer = getTech()->getLayer(layer->getLayerNum() + 2);
     if (aboveLayer->hasLef58SameNetInterCutSpcTblConstraint()) {
@@ -4127,7 +4193,7 @@ int FlexGCWorker::Impl::main()
   }
   // clear existing markers
   clearMarkers();
-  // check LEF58CornerSpacing
+  // check LEF58CornerSpacing and LEF58WidthTable ORTH
   checkMetalCornerSpacing();
   // check Short, NSMet, MetSpc based on max rectangles
   checkMetalSpacing();

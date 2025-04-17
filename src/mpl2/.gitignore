@@ -1,8 +1,0 @@
-test/results
-test/BP/*
-test/SW/*
-test/interface/*
-test/hier_rtlmp
-test/*.odb
-local/*
-test/local/*

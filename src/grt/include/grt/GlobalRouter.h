@@ -1,37 +1,5 @@
-/////////////////////////////////////////////////////////////////////////////
-//
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #pragma once
 
@@ -78,12 +46,12 @@ class Opendp;
 
 namespace rsz {
 class Resizer;
-class SpefWriter;
 }  // namespace rsz
 
 namespace sta {
 class dbSta;
 class dbNetwork;
+class SpefWriter;
 }  // namespace sta
 
 namespace grt {
@@ -179,7 +147,7 @@ class GlobalRouter : public ant::GlobalRouteSource
                            int layer,
                            float reduction_percentage);
   void setVerbose(bool v);
-  void setOverflowIterations(int iterations);
+  void setCongestionIterations(int iterations);
   void setCongestionReportIterStep(int congestion_report_iter_step);
   void setCongestionReportFile(const char* file_name);
   void setGridOrigin(int x, int y);
@@ -202,7 +170,7 @@ class GlobalRouter : public ant::GlobalRouteSource
   bool isCoveringPin(Net* net, GSegment& segment);
   std::vector<Net*> initFastRoute(int min_routing_layer, int max_routing_layer);
   void initFastRouteIncr(std::vector<Net*>& nets);
-  void estimateRC(rsz::SpefWriter* spef_writer = nullptr);
+  void estimateRC(sta::SpefWriter* spef_writer = nullptr);
   void estimateRC(odb::dbNet* db_net);
   // Return GRT layer lengths in dbu's for db_net's route indexed by routing
   // layer.
@@ -220,6 +188,7 @@ class GlobalRouter : public ant::GlobalRouteSource
                              const int& pos_x,
                              const int& pos_y,
                              const int& layer_level);
+  odb::Point getPositionOnGrid(const odb::Point& real_position);
   int repairAntennas(odb::dbMTerm* diode_mterm,
                      int iterations,
                      float ratio_margin,
@@ -236,6 +205,7 @@ class GlobalRouter : public ant::GlobalRouteSource
   std::set<odb::dbNet*> getDirtyNets() { return dirty_nets_; }
   // check_antennas
   bool haveRoutes() override;
+  bool designIsPlaced();
   bool haveDetailedRoutes();
   bool haveDetailedRoutes(const std::vector<odb::dbNet*>& db_nets);
   void makeNetWires() override;
@@ -312,6 +282,7 @@ class GlobalRouter : public ant::GlobalRouteSource
   void getMinMaxLayer(int& min_layer, int& max_layer);
   void getCapacityReductionData(CapacityReductionData& cap_red_data);
   bool isInitialized() const { return initialized_; }
+  bool isCongested() const { return is_congested_; }
   void setDbBlock(odb::dbBlock* block) { block_ = block; }
 
   void setRenderer(std::unique_ptr<AbstractGrouteRenderer> groute_renderer);
@@ -357,6 +328,7 @@ class GlobalRouter : public ant::GlobalRouteSource
                                   odb::dbTechLayer* tech_layer,
                                   bool is_macro = false);
   void addResourcesForPinAccess();
+  bool isPinReachable(const Pin& pin, const odb::Point& pos_on_grid);
   int computeNetWirelength(odb::dbNet* db_net);
   void computeWirelength();
   std::vector<Pin*> getAllPorts();
@@ -434,7 +406,7 @@ class GlobalRouter : public ant::GlobalRouteSource
   void initGrid(int max_layer);
   void computeCapacities(int max_layer);
   void findTrackPitches(int max_layer);
-  std::vector<Net*> findNets();
+  std::vector<Net*> findNets(bool init_clock_nets);
   void computeObstructionsAdjustments();
   void findLayerExtensions(std::vector<int>& layer_extensions);
   int findObstructions(odb::Rect& die_area);
@@ -484,7 +456,7 @@ class GlobalRouter : public ant::GlobalRouteSource
   // Flow variables
   float adjustment_;
   int layer_for_guide_dimension_;
-  int overflow_iterations_;
+  int congestion_iterations_{50};
   int congestion_report_iter_step_;
   bool allow_congestion_;
   std::vector<int> vertical_capacities_;
@@ -492,6 +464,7 @@ class GlobalRouter : public ant::GlobalRouteSource
   int macro_extension_;
   bool initialized_;
   int total_diodes_count_;
+  bool is_congested_{false};
   // TODO: remove this flag after support incremental updates on DRT PA
   bool skip_drt_aps_{false};
 

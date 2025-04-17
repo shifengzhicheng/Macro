@@ -1,8 +1,5 @@
-// Copyright 2024 Google LLC
-//
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file or at
-// https://developers.google.com/open-source/licenses/bsd
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2024-2025, The OpenROAD Authors
 
 #pragma once
 
@@ -54,7 +51,7 @@ class LogicExtractorFactory
   LogicCut BuildLogicCut(AbcLibrary& abc_network);
 
  private:
-  // Process vertificies from BFS STA output to find the primary inputs.
+  // Process vertices from BFS STA output to find the primary inputs.
   std::vector<sta::Pin*> GetPrimaryInputs(
       std::vector<sta::Vertex*>& cut_vertices);
   std::vector<sta::Pin*> GetPrimaryOutputs(
@@ -70,6 +67,9 @@ class LogicExtractorFactory
   void RemovePrimaryOutputInstances(
       std::unordered_set<sta::Instance*>& cut_instances,
       std::vector<sta::Pin*>& primary_output_pins);
+  std::vector<sta::Vertex*> AddMissingVertices(
+      std::vector<sta::Vertex*>& cut_vertices,
+      AbcLibrary& abc_library);
 
   std::vector<sta::Vertex*> endpoints_;
   sta::dbSta* open_sta_;

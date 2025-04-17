@@ -1,42 +1,20 @@
-//////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021-2025, The OpenROAD Authors
 
 #include "gui/heatMap.h"
 
 #include <QApplication>
+#include <QThread>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "heatMapSetup.h"
 #include "utl/Logger.h"
@@ -127,8 +105,6 @@ void HeatMapDataSource::dumpToFile(const std::string& file)
 
 void HeatMapDataSource::redraw()
 {
-  ensureMap();
-
   if (issue_redraw_) {
     renderer_->redraw();
   }
@@ -265,7 +241,7 @@ std::string HeatMapDataSource::formatValue(double value, bool legend) const
 void HeatMapDataSource::addBooleanSetting(
     const std::string& name,
     const std::string& label,
-    const std::function<bool(void)>& getter,
+    const std::function<bool()>& getter,
     const std::function<void(bool)>& setter)
 {
   settings_.emplace_back(MapSettingBoolean{name, label, getter, setter});
@@ -274,8 +250,8 @@ void HeatMapDataSource::addBooleanSetting(
 void HeatMapDataSource::addMultipleChoiceSetting(
     const std::string& name,
     const std::string& label,
-    const std::function<std::vector<std::string>(void)>& choices,
-    const std::function<std::string(void)>& getter,
+    const std::function<std::vector<std::string>()>& choices,
+    const std::function<std::string()>& getter,
     const std::function<void(std::string)>& setter)
 {
   settings_.emplace_back(
@@ -407,7 +383,7 @@ void HeatMapDataSource::clearMap()
 
 void HeatMapDataSource::setupMap()
 {
-  if (getBlock() == nullptr) {
+  if (getBlock() == nullptr || getBlock()->getDieArea().area() == 0) {
     return;
   }
 
@@ -420,7 +396,8 @@ void HeatMapDataSource::setupMap()
              utl::GUI,
              "HeatMap",
              1,
-             "Generating {}x{} map",
+             "{} - Generating {}x{} map",
+             name_,
              x_grid_size,
              y_grid_size);
   map_.resize(boost::extents[x_grid_size][y_grid_size]);
@@ -492,6 +469,13 @@ void HeatMapDataSource::setXYMapGrid(const std::vector<int>& x_grid,
 
 void HeatMapDataSource::destroyMap()
 {
+  if (destroy_map_) {
+    return;
+  }
+
+  debugPrint(
+      logger_, utl::GUI, "HeatMap", 1, "{} - destroy map requested", name_);
+
   destroy_map_ = true;
 
   redraw();
@@ -519,30 +503,35 @@ void HeatMapDataSource::ensureMap()
   std::unique_lock<std::mutex> lock(ensure_mutex_);
 
   if (destroy_map_) {
-    debugPrint(logger_, utl::GUI, "HeatMap", 1, "Destroying map");
+    debugPrint(logger_, utl::GUI, "HeatMap", 1, "{} - Destroying map", name_);
     clearMap();
     destroy_map_ = false;
   }
 
   const bool build_map = map_[0][0] == nullptr;
   if (build_map) {
-    debugPrint(logger_, utl::GUI, "HeatMap", 1, "Setting up map");
+    debugPrint(logger_, utl::GUI, "HeatMap", 1, "{} - Setting up map", name_);
     setupMap();
   }
 
   if (build_map || !isPopulated()) {
-    debugPrint(logger_, utl::GUI, "HeatMap", 1, "Populating map");
+    debugPrint(logger_, utl::GUI, "HeatMap", 1, "{} - Populating map", name_);
 
-    if (gui::Gui::enabled()) {
+    const bool update_cursor
+        = gui::Gui::enabled()
+          && QApplication::instance()->thread() == QThread::currentThread();
+
+    if (update_cursor) {
       QApplication::setOverrideCursor(Qt::WaitCursor);
     }
     populated_ = populateMap();
-    if (gui::Gui::enabled()) {
+    if (update_cursor) {
       QApplication::restoreOverrideCursor();
     }
 
     if (isPopulated()) {
-      debugPrint(logger_, utl::GUI, "HeatMap", 1, "Correcting map scale");
+      debugPrint(
+          logger_, utl::GUI, "HeatMap", 1, "{} - Correcting map scale", name_);
       correctMapScale(map_);
     }
 
@@ -555,7 +544,8 @@ void HeatMapDataSource::ensureMap()
   }
 
   if (!colors_correct_ && isPopulated()) {
-    debugPrint(logger_, utl::GUI, "HeatMap", 1, "Assigning map colors");
+    debugPrint(
+        logger_, utl::GUI, "HeatMap", 1, "{} - Assigning map colors", name_);
     assignMapColors();
   }
 }

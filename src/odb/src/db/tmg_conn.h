@@ -1,34 +1,5 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, Nefelus Inc
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #pragma once
 
@@ -126,48 +97,8 @@ struct tmg_connect_shape
 class tmg_conn
 {
  public:
-  int _slicedTilePinCnt;
-  int _stbtx1[200];
-  int _stbty1[200];
-  int _stbtx2[200];
-  int _stbty2[200];
-  dbBTerm* _slicedTileBTerm[200];
-  tmg_conn_search* _search;
-  tmg_conn_graph* _graph;
-  std::vector<tmg_rc> _rcV;
-  std::vector<tmg_rcpt> _ptV;
-  tmg_rcterm* _termV;
-  tmg_rcterm** _tstackV;
-  int _termN;
-  tmg_rcshort* _shortV;
-  int _shortN;
-  dbNet* _net;
-  bool _hasSWire;
-  bool _preserveSWire;
-  int _swireNetCnt;
-  bool _connected;
-  dbWireEncoder _encoder;
-  dbWire* _newWire;
-  dbTechNonDefaultRule* _net_rule;
-  dbTechNonDefaultRule* _path_rule;
-  int _misc_cnt;
-  int _cut_end_extMin;
-  int _need_short_wire_id;
-  std::vector<std::array<tmg_connect_shape, 32>> _csVV;
-  std::array<tmg_connect_shape, 32>* _csV;
-  int* _csNV;
-  int _csN;
-  tmg_rcpt* _first_for_clear;
-
- private:
-  int _termNmax;
-  int _shortNmax;
-  int _last_id;
-  int _firstSegmentAfterVia;
-  utl::Logger* logger_;
-
- public:
   tmg_conn(utl::Logger* logger);
+  ~tmg_conn();
   void analyzeNet(dbNet* net);
   void loadNet(dbNet* net);
   void loadWire(dbWire* wire);
@@ -226,6 +157,46 @@ class tmg_conn
   tmg_rc* addRcPatch(int ifr, int ito);
   int getDisconnectedStart();
   void copyWireIdToVisitedShorts(int j);
+
+  int _slicedTilePinCnt;
+  int _stbtx1[200];
+  int _stbty1[200];
+  int _stbtx2[200];
+  int _stbty2[200];
+  dbBTerm* _slicedTileBTerm[200];
+  tmg_conn_search* _search;
+  tmg_conn_graph* _graph;
+  std::vector<tmg_rc> _rcV;
+  std::vector<tmg_rcpt> _ptV;
+  tmg_rcterm* _termV;
+  tmg_rcterm** _tstackV;
+  int _termN;
+  tmg_rcshort* _shortV;
+  int _shortN;
+  dbNet* _net;
+  bool _hasSWire;
+  bool _preserveSWire;
+  int _swireNetCnt;
+  bool _connected;
+  dbWireEncoder _encoder;
+  dbWire* _newWire;
+  dbTechNonDefaultRule* _net_rule;
+  dbTechNonDefaultRule* _path_rule;
+  int _misc_cnt;
+  int _cut_end_extMin;
+  int _need_short_wire_id;
+  std::vector<std::array<tmg_connect_shape, 32>> _csVV;
+  std::array<tmg_connect_shape, 32>* _csV;
+  int* _csNV;
+  int _csN;
+  tmg_rcpt* _first_for_clear;
+
+  int _termNmax;
+  int _shortNmax;
+  int _last_id;
+  int _firstSegmentAfterVia;
+  utl::Logger* logger_;
+  friend class tmg_conn_graph;
 };
 
 class tmg_conn_search

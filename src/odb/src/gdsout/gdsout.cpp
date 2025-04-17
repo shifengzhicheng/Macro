@@ -1,38 +1,11 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, Nefelus Inc
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #include "odb/gdsout.h"
 
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace odb::gds {
 
@@ -235,16 +208,16 @@ void GDSWriter::writeStruct(dbGDSStructure* str)
     writeBox(box);
   }
 
-  for (auto node : str->getGDSNodes()) {
-    writeNode(node);
-  }
-
   for (auto path : str->getGDSPaths()) {
     writePath(path);
   }
 
   for (auto sref : str->getGDSSRefs()) {
     writeSRef(sref);
+  }
+
+  for (auto aref : str->getGDSARefs()) {
+    writeARef(aref);
   }
 
   for (auto text : str->getGDSTexts()) {
@@ -339,11 +312,11 @@ void GDSWriter::writePath(dbGDSPath* path)
   writeLayer(path->getLayer());
   writeDataType(path->getDatatype());
 
-  if (path->get_pathType() != 0) {
+  if (path->getPathType() != 0) {
     record_t r2;
     r2.type = RecordType::PATHTYPE;
     r2.dataType = DataType::INT_2;
-    r2.data16 = {path->get_pathType()};
+    r2.data16 = {path->getPathType()};
     writeRecord(r2);
   }
 
@@ -364,36 +337,58 @@ void GDSWriter::writePath(dbGDSPath* path)
 void GDSWriter::writeSRef(dbGDSSRef* sref)
 {
   record_t r;
-  auto colrow = sref->get_colRow();
-  if (colrow.first == 1 && colrow.second == 1) {
-    r.type = RecordType::SREF;
-  } else {
-    r.type = RecordType::AREF;
-  }
+  r.type = RecordType::SREF;
   r.dataType = DataType::NO_DATA;
   writeRecord(r);
 
   record_t r2;
   r2.type = RecordType::SNAME;
   r2.dataType = DataType::ASCII_STRING;
-  r2.data8 = sref->get_sName();
+  r2.data8 = sref->getStructure()->getName();
   writeRecord(r2);
 
   if (!sref->getTransform().identity()) {
     writeSTrans(sref->getTransform());
   }
 
-  if (colrow.first != 1 || colrow.second != 1) {
+  std::vector<Point> origin({sref->getOrigin()});
+  writeXY(origin);
+
+  writePropAttr(sref);
+  writeEndel();
+}
+
+void GDSWriter::writeARef(dbGDSARef* aref)
+{
+  record_t r;
+  r.type = RecordType::AREF;
+  r.dataType = DataType::NO_DATA;
+  writeRecord(r);
+
+  record_t r2;
+  r2.type = RecordType::SNAME;
+  r2.dataType = DataType::ASCII_STRING;
+  r2.data8 = aref->getStructure()->getName();
+  writeRecord(r2);
+
+  if (!aref->getTransform().identity()) {
+    writeSTrans(aref->getTransform());
+  }
+
+  const int16_t cols = aref->getNumColumns();
+  const int16_t rows = aref->getNumRows();
+  if (cols != 1 || rows != 1) {
     record_t r4;
     r4.type = RecordType::COLROW;
     r4.dataType = DataType::INT_2;
-    r4.data16 = {colrow.first, colrow.second};
+    r4.data16 = {cols, rows};
     writeRecord(r4);
   }
 
-  writeXY(sref->getXY());
+  std::vector<Point> points({aref->getOrigin(), aref->getLr(), aref->getUl()});
+  writeXY(points);
 
-  writePropAttr(sref);
+  writePropAttr(aref);
   writeEndel();
 }
 
@@ -414,19 +409,12 @@ void GDSWriter::writeText(dbGDSText* text)
 
   writeTextPres(text->getPresentation());
 
-  if (text->getWidth() != 0) {
-    record_t r4;
-    r4.type = RecordType::WIDTH;
-    r4.dataType = DataType::INT_4;
-    r4.data32 = {text->getWidth()};
-    writeRecord(r4);
-  }
-
   if (!text->getTransform().identity()) {
     writeSTrans(text->getTransform());
   }
 
-  writeXY(text->getXY());
+  std::vector<Point> origin({text->getOrigin()});
+  writeXY(origin);
 
   record_t r5;
   r5.type = RecordType::STRING;
@@ -453,30 +441,11 @@ void GDSWriter::writeBox(dbGDSBox* box)
   r2.data16 = {box->getDatatype()};
   writeRecord(r2);
 
-  writeXY(box->getXY());
+  const Rect b = box->getBounds();
+  std::vector<Point> points({b.ll(), b.lr(), b.ur(), b.ul(), b.ll()});
+  writeXY(points);
 
   writePropAttr(box);
-  writeEndel();
-}
-
-void GDSWriter::writeNode(dbGDSNode* node)
-{
-  record_t r;
-  r.type = RecordType::NODE;
-  r.dataType = DataType::NO_DATA;
-  writeRecord(r);
-
-  writeLayer(node->getLayer());
-
-  record_t r2;
-  r2.type = RecordType::NODETYPE;
-  r2.dataType = DataType::INT_2;
-  r2.data16 = {node->getDatatype()};
-  writeRecord(r2);
-
-  writeXY(node->getXY());
-
-  writePropAttr(node);
   writeEndel();
 }
 
@@ -487,8 +456,7 @@ void GDSWriter::writeSTrans(const dbGDSSTrans& strans)
   r.dataType = DataType::BIT_ARRAY;
 
   char data0 = strans._flipX << 7;
-  char data1 = strans._absAngle << 2 | strans._absMag << 1;
-  r.data8 = {data0, data1};
+  r.data8 = {data0, 0};
   writeRecord(r);
 
   if (strans._mag != 1.0) {

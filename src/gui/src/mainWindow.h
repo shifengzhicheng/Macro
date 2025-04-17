@@ -1,34 +1,5 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2025, The OpenROAD Authors
 
 #pragma once
 
@@ -39,12 +10,15 @@
 #include <QShortcut>
 #include <QToolBar>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "findDialog.h"
 #include "gotoDialog.h"
 #include "gui/gui.h"
 #include "ord/OpenRoad.hh"
 #include "ruler.h"
+#include "utl/Progress.h"
 
 namespace odb {
 class dbDatabase;
@@ -52,12 +26,13 @@ class dbDatabase;
 
 namespace utl {
 class Logger;
-}
-#ifdef ENABLE_CHARTS
+class Progress;
+}  // namespace utl
+
 namespace sta {
 class Pin;
 }
-#endif
+
 namespace gui {
 
 class LayoutViewer;
@@ -72,26 +47,27 @@ class DRCWidget;
 class ClockWidget;
 class BrowserWidget;
 class ChartsWidget;
+class HelpWidget;
 
 // This is the main window for the GUI.  Currently we use a single
 // instance of this class.
-class MainWindow : public QMainWindow, public ord::OpenRoadObserver
+class MainWindow : public QMainWindow, public odb::dbDatabaseObserver
 {
   Q_OBJECT
 
  public:
   MainWindow(bool load_settings = true, QWidget* parent = nullptr);
-  ~MainWindow();
+  ~MainWindow() override;
 
   void setDatabase(odb::dbDatabase* db);
-  void init(sta::dbSta* sta);
+  void init(sta::dbSta* sta, const std::string& help_path);
 
   odb::dbDatabase* getDb() const { return db_; }
 
   // From ord::OpenRoad::Observer
-  virtual void postReadLef(odb::dbTech* tech, odb::dbLib* library) override;
-  virtual void postReadDef(odb::dbBlock* block) override;
-  virtual void postReadDb(odb::dbDatabase* db) override;
+  void postReadLef(odb::dbTech* tech, odb::dbLib* library) override;
+  void postReadDef(odb::dbBlock* block) override;
+  void postReadDb(odb::dbDatabase* db) override;
 
   // Capture logger messages into the script widget output
   void setLogger(utl::Logger* logger);
@@ -106,8 +82,13 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   ClockWidget* getClockViewer() const { return clock_viewer_; }
   ScriptWidget* getScriptWidget() const { return script_; }
   Inspector* getInspector() const { return inspector_; }
+  HelpWidget* getHelpViewer() const { return help_widget_; }
+  ChartsWidget* getChartsWidget() const { return charts_widget_; }
+  TimingWidget* getTimingWidget() const { return timing_widget_; }
 
   std::vector<std::string> getRestoreTclCommands();
+
+  void setTitle(const std::string& title);
 
  signals:
   // Signaled when we get a postRead callback to tell the sub-widgets
@@ -268,10 +249,8 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   void showGlobalConnect();
   void openDesign();
   void saveDesign();
-#ifdef ENABLE_CHARTS
   void reportSlackHistogramPaths(const std::set<const sta::Pin*>& report_pins,
                                  const std::string& path_group_name);
-#endif
   void enableDeveloper();
 
  protected:
@@ -298,6 +277,8 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   std::string convertDBUToString(int value, bool add_units) const;
   int convertStringToDBU(const std::string& value, bool* ok) const;
 
+  void updateTitle();
+
   odb::dbDatabase* db_;
   utl::Logger* logger_;
   SelectionSet selected_;
@@ -318,9 +299,12 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   ClockWidget* clock_viewer_;
   BrowserWidget* hierarchy_widget_;
   ChartsWidget* charts_widget_;
+  HelpWidget* help_widget_;
 
   FindObjectDialog* find_dialog_;
   GotoLocationDialog* goto_dialog_;
+
+  std::string window_title_;
 
   QMenu* file_menu_;
   QMenu* view_menu_;
@@ -364,7 +348,7 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   // heat map actions
   std::map<HeatMapDataSource*, QAction*> heatmap_actions_;
 
-  static constexpr const char* window_title_ = "OpenROAD";
+  std::unique_ptr<utl::Progress> cli_progress_ = nullptr;
 };
 
 }  // namespace gui

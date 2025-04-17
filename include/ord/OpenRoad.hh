@@ -1,45 +1,12 @@
-/////////////////////////////////////////////////////////////////////////////
-//
-// Copyright (c) 2019, The Regents of the University of California
-// All rights reserved.
-//
-// BSD 3-Clause License
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #pragma once
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
-
-#include "OpenRoadObserver.hh"
 
 extern "C" {
 struct Tcl_Interp;
@@ -57,6 +24,7 @@ class Rect;
 namespace sta {
 class dbSta;
 class dbNetwork;
+class VerilogReader;
 }  // namespace sta
 
 namespace rsz {
@@ -97,10 +65,6 @@ class Finale;
 
 namespace mpl {
 class MacroPlacer;
-}
-
-namespace mpl2 {
-class MacroPlacer2;
 }
 
 namespace mpl3 {
@@ -170,7 +134,9 @@ class OpenRoad
   // OpenRoad object and/or any other tools they need to reference.
   static OpenRoad* openRoad();
   static void setOpenRoad(OpenRoad* app, bool reinit_ok = false);
-  void init(Tcl_Interp* tcl_interp);
+  void init(Tcl_Interp* tcl_interp,
+            const char* log_filename,
+            const char* metrics_filename);
 
   Tcl_Interp* tclInterp() { return tcl_interp_; }
   utl::Logger* getLogger() { return logger_; }
@@ -186,7 +152,6 @@ class OpenRoad
   fin::Finale* getFinale() { return finale_; }
   tap::Tapcell* getTapcell() { return tapcell_; }
   mpl::MacroPlacer* getMacroPlacer() { return macro_placer_; }
-  mpl2::MacroPlacer2* getMacroPlacer2() { return macro_placer2_; }
   mpl3::MacroPlacer3* getMacroPlacer3() { return macro_placer3_; }
   rcx::Ext* getOpenRCX() { return extractor_; }
   drt::TritonRoute* getTritonRoute() { return detailed_router_; }
@@ -245,14 +210,12 @@ class OpenRoad
   void writeDb(std::ostream& stream);
   void writeDb(const char* filename);
 
-  void diffDbs(const char* filename1, const char* filename2, const char* diffs);
-
   void setThreadCount(int threads, bool printInfo = true);
   void setThreadCount(const char* threads, bool printInfo = true);
   int getThreadCount();
 
-  void addObserver(OpenRoadObserver* observer);
-  void removeObserver(OpenRoadObserver* observer);
+  std::string getExePath() const;
+  std::string getDocsPath() const;
 
   static const char* getVersion();
   static const char* getGitDescribe();
@@ -260,7 +223,6 @@ class OpenRoad
   static bool getGPUCompileOption();
   static bool getPythonCompileOption();
   static bool getGUICompileOption();
-  static bool getChartsCompileOption();
 
  protected:
   ~OpenRoad();
@@ -272,6 +234,7 @@ class OpenRoad
   utl::Logger* logger_ = nullptr;
   odb::dbDatabase* db_ = nullptr;
   dbVerilogNetwork* verilog_network_ = nullptr;
+  sta::VerilogReader* verilog_reader_ = nullptr;
   sta::dbSta* sta_ = nullptr;
   rsz::Resizer* resizer_ = nullptr;
   ppl::IOPlacer* ioPlacer_ = nullptr;
@@ -279,7 +242,6 @@ class OpenRoad
   dpo::Optdp* optdp_ = nullptr;
   fin::Finale* finale_ = nullptr;
   mpl::MacroPlacer* macro_placer_ = nullptr;
-  mpl2::MacroPlacer2* macro_placer2_ = nullptr;
   mpl3::MacroPlacer3* macro_placer3_ = nullptr;
   grt::GlobalRouter* global_router_ = nullptr;
   rmp::Restructure* restructure_ = nullptr;
@@ -296,8 +258,6 @@ class OpenRoad
   dst::Distributed* distributer_ = nullptr;
   stt::SteinerTreeBuilder* stt_builder_ = nullptr;
   dft::Dft* dft_ = nullptr;
-
-  std::set<OpenRoadObserver*> observers_;
 
   int threads_ = 1;
 

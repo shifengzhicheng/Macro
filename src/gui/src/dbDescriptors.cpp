@@ -1,51 +1,26 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2021, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021-2025, The OpenROAD Authors
 
 #include "dbDescriptors.h"
 
 #include <QInputDialog>
 #include <QStringList>
 #include <boost/algorithm/string.hpp>
+#include <cmath>
+#include <functional>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <queue>
 #include <regex>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #include "bufferTreeDescriptor.h"
 #include "db_sta/dbNetwork.hh"
 #include "db_sta/dbSta.hh"
 #include "odb/db.h"
-#include "odb/dbCompare.h"
 #include "odb/dbShape.h"
 #include "sta/Liberty.hh"
 #include "utl/Logger.h"
@@ -57,6 +32,8 @@ static void populateODBProperties(Descriptor::Properties& props,
                                   odb::dbObject* object,
                                   const std::string& prefix = "")
 {
+  std::optional<int> src_file_id;
+  std::optional<int> src_file_line;
   Descriptor::PropertyList prop_list;
   for (const auto prop : odb::dbProperty::getProperties(object)) {
     std::any value;
@@ -88,7 +65,26 @@ static void populateODBProperties(Descriptor::Properties& props,
         value = static_cast<odb::dbDoubleProperty*>(prop)->getValue();
         break;
     }
-    prop_list.emplace_back(prop->getName(), value);
+    // Look for the file name properties from Verilog2db::storeLineInfo
+    if (prop->getName() == "src_file_id") {
+      src_file_id = std::any_cast<int>(value);
+    } else if (prop->getName() == "src_file_line") {
+      src_file_line = std::any_cast<int>(value);
+    } else {
+      prop_list.emplace_back(prop->getName(), value);
+    }
+  }
+
+  if (src_file_id && src_file_line) {
+    auto block = object->getDb()->getChip()->getBlock();
+    const auto src_file = fmt::format("src_file_{}", src_file_id.value());
+    const auto file_name_prop
+        = odb::dbStringProperty::find(block, src_file.c_str());
+    if (file_name_prop) {
+      const auto info = fmt::format(
+          "{}:{}", file_name_prop->getValue(), src_file_line.value());
+      prop_list.emplace_back("Source", info);
+    }
   }
 
   if (!prop_list.empty()) {
@@ -102,50 +98,63 @@ static void populateODBProperties(Descriptor::Properties& props,
 
 std::string Descriptor::convertUnits(const double value,
                                      const bool area,
-                                     int digits)
+                                     const int digits)
 {
+  auto format = [area, value, digits](int log_units) {
+    double unit_scale = 1.0;
+    std::string unit;
+    if (log_units <= -18) {
+      unit_scale = 1e18;
+      unit = "a";
+    } else if (log_units <= -15) {
+      unit_scale = 1e15;
+      unit = "f";
+    } else if (log_units <= -12) {
+      unit_scale = 1e12;
+      unit = "p";
+    } else if (log_units <= -9) {
+      unit_scale = 1e9;
+      unit = "n";
+    } else if (log_units <= -6) {
+      unit_scale = 1e6;
+      const char* micron = "μ";
+      unit = micron;
+    } else if (log_units <= -3) {
+      unit_scale = 1e3;
+      unit = "m";
+    } else if (log_units <= 0) {
+    } else if (log_units <= 3) {
+      unit_scale = 1e-3;
+      unit = "k";
+    } else if (log_units <= 6) {
+      unit_scale = 1e-6;
+      unit = "M";
+    } else if (log_units <= 9) {
+      unit_scale = 1e-9;
+      unit = "G";
+    }
+    if (area) {
+      unit_scale *= unit_scale;
+    }
+
+    auto str = utl::to_numeric_string(value * unit_scale, digits);
+    return std::make_pair(str, unit);
+  };
+
   double log_value = value;
   if (area) {
     log_value = std::sqrt(log_value);
   }
-  int log_units = std::floor(std::log10(log_value) / 3.0) * 3;
-  double unit_scale = 1.0;
-  std::string unit;
-  if (log_units <= -18) {
-    unit_scale = 1e18;
-    unit = "a";
-  } else if (log_units <= -15) {
-    unit_scale = 1e15;
-    unit = "f";
-  } else if (log_units <= -12) {
-    unit_scale = 1e12;
-    unit = "p";
-  } else if (log_units <= -9) {
-    unit_scale = 1e9;
-    unit = "n";
-  } else if (log_units <= -6) {
-    unit_scale = 1e6;
-    const char* micron = "μ";
-    unit = micron;
-  } else if (log_units <= -3) {
-    unit_scale = 1e3;
-    unit = "m";
-  } else if (log_units <= 0) {
-  } else if (log_units <= 3) {
-    unit_scale = 1e-3;
-    unit = "k";
-  } else if (log_units <= 6) {
-    unit_scale = 1e-6;
-    unit = "M";
-  }
-  if (area) {
-    unit_scale *= unit_scale;
-  }
+  // Try both ways and see what produces the better result.
+  auto [s1, u1] = format(std::trunc(std::log10(log_value) / 3.0) * 3);
+  auto [s2, u2] = format(std::floor(std::log10(log_value) / 3.0) * 3);
 
-  auto str = utl::to_numeric_string(value * unit_scale, digits);
-  str += " " + unit;
-
-  return str;
+  // Don't include the unit size in the comparison as the micron
+  // symbol counts as two characters.
+  if (s1.size() < s2.size()) {
+    return s1 + " " + u1;
+  }
+  return s2 + " " + u2;
 }
 
 // renames an object
@@ -160,7 +169,7 @@ static void addRenameEditor(T obj, Descriptor::Editors& editor)
            return false;
          }
          // check for illegal characters
-         for (const char ch : {obj->getBlock()->getHierarchyDelimeter()}) {
+         for (const char ch : {obj->getBlock()->getHierarchyDelimiter()}) {
            if (new_name.find(ch) != std::string::npos) {
              return false;
            }
@@ -1573,6 +1582,13 @@ Selected DbNetDescriptor::makeSelected(std::any object) const
   return Selected();
 }
 
+bool DbNetDescriptor::lessThan(std::any l, std::any r) const
+{
+  auto l_net = getObject(l);
+  auto r_net = getObject(r);
+  return BaseDbDescriptor::lessThan(l_net, r_net);
+}
+
 bool DbNetDescriptor::getAllObjects(SelectionSet& objects) const
 {
   auto* chip = db_->getChip();
@@ -1610,9 +1626,8 @@ odb::dbObject* DbNetDescriptor::getSink(const std::any& object) const
 
 //////////////////////////////////////////////////
 
-DbITermDescriptor::DbITermDescriptor(
-    odb::dbDatabase* db,
-    std::function<bool(void)> usingPolyDecompView)
+DbITermDescriptor::DbITermDescriptor(odb::dbDatabase* db,
+                                     std::function<bool()> usingPolyDecompView)
     : BaseDbDescriptor<odb::dbITerm>(db),
       usingPolyDecompView_(std::move(usingPolyDecompView))
 {
@@ -1789,6 +1804,11 @@ Descriptor::Properties DbBTermDescriptor::getDBProperties(
     props.push_back({"Constraint Region", constraint.value()});
   }
 
+  props.push_back({"Is Mirrored", bterm->isMirrored()});
+  if (odb::dbBTerm* mirrored = bterm->getMirroredBTerm()) {
+    props.push_back({"Mirrored", gui->makeSelected(mirrored)});
+  }
+
   SelectionSet pins;
   for (auto* pin : bterm->getBPins()) {
     pins.insert(gui->makeSelected(pin));
@@ -1924,9 +1944,8 @@ bool DbBPinDescriptor::getAllObjects(SelectionSet& objects) const
 
 //////////////////////////////////////////////////
 
-DbMTermDescriptor::DbMTermDescriptor(
-    odb::dbDatabase* db,
-    std::function<bool(void)> usingPolyDecompView)
+DbMTermDescriptor::DbMTermDescriptor(odb::dbDatabase* db,
+                                     std::function<bool()> usingPolyDecompView)
     : BaseDbDescriptor<odb::dbMTerm>(db),
       usingPolyDecompView_(std::move(usingPolyDecompView))
 {
@@ -2231,6 +2250,16 @@ Descriptor::Properties DbBlockageDescriptor::getDBProperties(
       {"Max density", std::to_string(blockage->getMaxDensity()) + "%"}};
 
   return props;
+}
+
+Descriptor::Actions DbBlockageDescriptor::getActions(std::any object) const
+{
+  auto blk = std::any_cast<odb::dbBlockage*>(object);
+  return Actions(
+      {{"Delete", [blk]() {
+          odb::dbBlockage::destroy(blk);
+          return Selected();  // unselect since this object is now gone
+        }}});
 }
 
 Descriptor::Editors DbBlockageDescriptor::getEditors(std::any object) const
@@ -2601,7 +2630,8 @@ Descriptor::Properties DbTechLayerDescriptor::getDBProperties(
     }
 
     for (const auto& [cutclass, min_cut] : min_cut_rule->getCutClassCutsMap()) {
-      lef58_minimum_cuts.emplace_back(text + " - " + cutclass, min_cut);
+      lef58_minimum_cuts.emplace_back(fmt::format("{} - {}", text, cutclass),
+                                      min_cut);
     }
   }
   if (!lef58_minimum_cuts.empty()) {
@@ -2781,7 +2811,7 @@ bool DbTermAccessPointDescriptor::getAllObjects(SelectionSet& objects) const
   }
 
   for (auto* iterm : block->getITerms()) {
-    for (auto [mpin, aps] : iterm->getAccessPoints()) {
+    for (const auto& [mpin, aps] : iterm->getAccessPoints()) {
       for (auto* ap : aps) {
         objects.insert(makeSelected(DbTermAccessPoint{ap, iterm}));
       }

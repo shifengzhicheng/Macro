@@ -1,41 +1,14 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2018-2020, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE
-// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2018-2025, The OpenROAD Authors
 
 #include "timingBase.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <memory>
 #include <utility>
+#include <vector>
 
 #include "nesterovBase.h"
 #include "placerBase.h"
@@ -142,9 +115,13 @@ void TimingBase::setTimingNetWeightMax(float max)
   net_weight_max_ = max;
 }
 
-bool TimingBase::updateGNetWeights(bool run_journal_restore)
+bool TimingBase::executeTimingDriven(bool run_journal_restore)
 {
   rs_->findResizeSlacks(run_journal_restore);
+
+  if (!run_journal_restore) {
+    nbc_->fixPointers();
+  }
 
   // get worst resize nets
   sta::NetSeq& worst_slack_nets = rs_->resizeWorstSlackNets();
@@ -152,7 +129,7 @@ bool TimingBase::updateGNetWeights(bool run_journal_restore)
   if (worst_slack_nets.empty()) {
     log_->warn(
         GPL,
-        114,
+        105,
         "Timing-driven: no net slacks found. Timing-driven mode disabled.");
     return false;
   }
@@ -163,7 +140,7 @@ bool TimingBase::updateGNetWeights(bool run_journal_restore)
       = rs_->resizeNetSlack(worst_slack_nets[worst_slack_nets.size() - 1])
             .value();
 
-  log_->info(GPL, 101, "Timing-driven: worst slack {:.3g}", slack_min);
+  log_->info(GPL, 106, "Timing-driven: worst slack {:.3g}", slack_min);
 
   if (sta::fuzzyInf(slack_min)) {
     log_->warn(GPL,
@@ -206,7 +183,12 @@ bool TimingBase::updateGNetWeights(bool run_journal_restore)
     }
   }
 
-  log_->info(GPL, 103, "Timing-driven: weighted {} nets.", weighted_net_count);
+  debugPrint(log_,
+             GPL,
+             "timing",
+             1,
+             "Timing-driven: weighted {} nets.",
+             weighted_net_count);
   return true;
 }
 

@@ -1,47 +1,17 @@
-############################################################################
-##
-## Copyright (c) 2022, The Regents of the University of Minnesota
-## All rights reserved.
-##
-## BSD 3-Clause License
-##
-## Redistribution and use in source and binary forms, with or without
-## modification, are permitted provided that the following conditions are met:
-##
-## * Redistributions of source code must retain the above copyright notice, this
-##   list of conditions and the following disclaimer.
-##
-## * Redistributions in binary form must reproduce the above copyright notice,
-##   this list of conditions and the following disclaimer in the documentation
-##   and/or other materials provided with the distribution.
-##
-## * Neither the name of the copyright holder nor the names of its
-##   contributors may be used to endorse or promote products derived from
-##   this software without specific prior written permission.
-##
-## THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-## AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-## IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-## ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-## LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-## CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-## SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-## INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-## CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-## ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-## POSSIBILITY OF SUCH DAMAGE.
-##
-############################################################################
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2022-2025, The OpenROAD Authors
 
 sta::define_cmd_args "check_power_grid" {
   -net power_net
   [-error_file error_file]
   [-floorplanning]
+  [-dont_require_terminals]
 }
 
 proc check_power_grid { args } {
   sta::parse_key_args "check_power_grid" args \
-    keys {-net -error_file} flags {-floorplanning}
+    keys {-net -error_file} \
+    flags {-floorplanning -dont_require_terminals}
 
   if { ![info exists keys(-net)] } {
     utl::error PSM 57 "Argument -net not specified."
@@ -53,8 +23,13 @@ proc check_power_grid { args } {
   }
 
   set floorplanning [info exists flags(-floorplanning)]
+  set dont_require_bterm [info exists flags(-dont_require_terminals)]
 
-  psm::check_connectivity_cmd [psm::find_net $keys(-net)] $floorplanning $error_file
+  psm::check_connectivity_cmd \
+    [psm::find_net $keys(-net)] \
+    $floorplanning \
+    $error_file \
+    $dont_require_bterm
 }
 
 sta::define_cmd_args "analyze_power_grid" {
@@ -66,13 +41,14 @@ sta::define_cmd_args "analyze_power_grid" {
   [-em_outfile em_file]
   [-vsrc voltage_source_file]
   [-source_type FULL|BUMPS|STRAPS]
+  [-allow_reuse]
 }
 
 proc analyze_power_grid { args } {
   sta::parse_key_args "analyze_power_grid" args \
     keys {-net -corner -voltage_file -error_file -em_outfile -vsrc \
       -source_type} \
-    flags {-enable_em}
+    flags {-enable_em -allow_reuse}
   if { ![info exists keys(-net)] } {
     utl::error PSM 58 "Argument -net not specified."
   }
@@ -111,6 +87,7 @@ proc analyze_power_grid { args } {
     [sta::parse_corner_or_default keys] \
     $source_type \
     $error_file \
+    [info exists flags(-allow_reuse)] \
     $enable_em \
     $em_file \
     $voltage_file \
@@ -226,6 +203,25 @@ proc set_pdnsim_net_voltage { args } {
   }
 }
 
+sta::define_cmd_args "set_pdnsim_inst_power" {
+  -inst instance
+  -power power
+  [-corner corner]}
+
+proc set_pdnsim_inst_power { args } {
+  sta::parse_key_args "set_pdnsim_inst_power" args \
+    keys {-inst -corner -power} flags {}
+  if { [info exists keys(-inst)] && [info exists keys(-power)] } {
+    set inst [psm::find_inst $keys(-inst)]
+    set power $keys(-power)
+    set corner [sta::parse_corner_or_all keys]
+    psm::set_inst_power $inst $corner $power
+  } else {
+    utl::error PSM 63 "Argument -inst or -power not specified.\
+      Please specify both -inst and -power arguments."
+  }
+}
+
 sta::define_cmd_args "set_pdnsim_source_settings" {
   [-bump_dx pitch]
   [-bump_dy pitch]
@@ -269,5 +265,13 @@ proc find_net { net_name } {
     utl::error PSM 28 "Cannot find net $net_name in the design."
   }
   return $net
+}
+
+proc find_inst { inst_name } {
+  set inst [[ord::get_db_block] findInst $inst_name]
+  if { $inst == "NULL" } {
+    utl::error PSM 29 "Cannot find instance $inst_name in the design."
+  }
+  return $inst
 }
 }

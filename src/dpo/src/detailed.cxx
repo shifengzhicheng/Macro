@@ -1,34 +1,5 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2021, Andrew Kennings
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021-2025, The OpenROAD Authors
 
 #include <algorithm>
 #include <boost/format.hpp>
@@ -36,7 +7,9 @@
 #include <cmath>
 #include <iostream>
 #include <stack>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "utility.h"
 #include "utl/Logger.h"
@@ -70,7 +43,6 @@ bool Detailed::improve(DetailedMgr& mgr)
 
   arch_ = mgr.getArchitecture();
   network_ = mgr.getNetwork();
-  rt_ = mgr.getRoutingParams();  // Can be NULL.
 
   // Parse the script string and run each command.
   boost::char_separator<char> separators(" \r\t\n", ";");
@@ -172,13 +144,13 @@ void Detailed::doDetailedCommand(std::vector<std::string>& args)
   logger->info(DPO, 303, "Running algorithm for {:s}.", command);
 
   if (strcmp(args[0].c_str(), "mis") == 0) {
-    DetailedMis mis(arch_, network_, rt_);
+    DetailedMis mis(arch_, network_);
     mis.run(mgr_, args);
   } else if (strcmp(args[0].c_str(), "gs") == 0) {
-    DetailedGlobalSwap gs(arch_, network_, rt_);
+    DetailedGlobalSwap gs(arch_, network_);
     gs.run(mgr_, args);
   } else if (strcmp(args[0].c_str(), "vs") == 0) {
-    DetailedVerticalSwap vs(arch_, network_, rt_);
+    DetailedVerticalSwap vs(arch_, network_);
     vs.run(mgr_, args);
   } else if (strcmp(args[0].c_str(), "ro") == 0) {
     DetailedReorderer ro(arch_, network_);

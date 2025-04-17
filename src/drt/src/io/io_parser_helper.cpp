@@ -1,38 +1,18 @@
-/* Authors: Lutong Wang and Bangqi Xu */
-/*
- * Copyright (c) 2019, The Regents of the University of California
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the University nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
+#include <algorithm>
 #include <boost/graph/connected_components.hpp>
 #include <boost/polygon/polygon.hpp>
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <set>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 #include "frBaseTypes.h"
 #include "frProfileTask.h"
@@ -103,9 +83,10 @@ void io::Parser::initDefaultVias()
       continue;
     }
     // Check whether viaDefs set is empty
-    std::set<frViaDef*> viaDefs = layer->getViaDefs();
+    const auto& viaDefs = layer->getViaDefs();
     if (!viaDefs.empty()) {
-      std::map<int, std::map<viaRawPriorityTuple, frViaDef*>> cuts2ViaDefs;
+      std::map<int, std::map<viaRawPriorityTuple, const frViaDef*>>
+          cuts2ViaDefs;
       for (auto& viaDef : viaDefs) {
         int cutNum = int(viaDef->getCutFigs().size());
         viaRawPriorityTuple priority;
@@ -116,22 +97,23 @@ void io::Parser::initDefaultVias()
       if (iter_1cut != cuts2ViaDefs.end() && !iter_1cut->second.empty()) {
         auto defaultSingleCutVia = iter_1cut->second.begin()->second;
         getTech()->getLayer(layerNum)->setDefaultViaDef(defaultSingleCutVia);
-      } else if (layerNum > TOP_ROUTING_LAYER) {
+      } else if (layerNum > router_cfg_->TOP_ROUTING_LAYER) {
         // We may need vias here to stack up to bumps.  However there
         // may not be a single cut via.  Since we aren't routing, but
         // just stacking, we'll use the best via we can find.
         auto via_map = cuts2ViaDefs.begin()->second;
         getTech()->getLayer(layerNum)->setDefaultViaDef(
             via_map.begin()->second);
-      } else if (layerNum >= BOTTOM_ROUTING_LAYER) {
+      } else if (layerNum >= router_cfg_->BOTTOM_ROUTING_LAYER) {
         logger_->error(DRT,
                        234,
                        "{} does not have single-cut via.",
                        getTech()->getLayer(layerNum)->getName());
       }
     } else {
-      if (layerNum >= BOTTOM_ROUTING_LAYER
-          && (layerNum <= std::max(TOP_ROUTING_LAYER, topPinLayer))) {
+      if (layerNum >= router_cfg_->BOTTOM_ROUTING_LAYER
+          && (layerNum
+              <= std::max(router_cfg_->TOP_ROUTING_LAYER, topPinLayer))) {
         logger_->error(DRT,
                        233,
                        "{} does not have any vias.",
@@ -139,8 +121,9 @@ void io::Parser::initDefaultVias()
       }
     }
     // generate via if default via enclosure is not along pref dir
-    if (ENABLE_VIA_GEN && layerNum >= BOTTOM_ROUTING_LAYER
-        && layerNum <= TOP_ROUTING_LAYER) {
+    if (router_cfg_->ENABLE_VIA_GEN
+        && layerNum >= router_cfg_->BOTTOM_ROUTING_LAYER
+        && layerNum <= router_cfg_->TOP_ROUTING_LAYER) {
       auto techDefautlViaDef
           = getTech()->getLayer(layerNum)->getDefaultViaDef();
       frVia via(techDefautlViaDef);
@@ -278,17 +261,18 @@ void io::Parser::initSecondaryVias()
     if (!has_default_viadef || !has_max_spacing_constraints) {
       continue;
     }
-    std::set<frViaDef*> viadefs = layer->getViaDefs();
+    const auto& viadefs = layer->getViaDefs();
     if (!viadefs.empty()) {
-      std::map<int, std::map<viaRawPriorityTuple, frViaDef*>> cuts_to_viadefs;
+      std::map<int, std::map<viaRawPriorityTuple, const frViaDef*>>
+          cuts_to_viadefs;
       for (auto& viadef : viadefs) {
         int cut_num = int(viadef->getCutFigs().size());
         viaRawPriorityTuple priority;
         getViaRawPriority(viadef, priority);
         cuts_to_viadefs[cut_num][priority] = viadef;
       }
-      for (auto [cuts, viadefs] : cuts_to_viadefs) {
-        for (auto [priority, viadef] : viadefs) {
+      for (const auto& [cuts, viadefs] : cuts_to_viadefs) {
+        for (const auto& [priority, viadef] : viadefs) {
           if (viadef->getCutClassIdx() == default_viadef->getCutClassIdx()) {
             continue;
           }
@@ -464,7 +448,8 @@ void io::Parser::initCutLayerWidth()
         auto viaWidth = cutRect->width();
         layer->setWidth(viaWidth);
       } else {
-        if (layerNum >= BOTTOM_ROUTING_LAYER && layerNum <= TOP_ROUTING_LAYER) {
+        if (layerNum >= router_cfg_->BOTTOM_ROUTING_LAYER
+            && layerNum <= router_cfg_->TOP_ROUTING_LAYER) {
           logger_->error(DRT,
                          242,
                          "CUT layer {} does not have default via.",
@@ -483,7 +468,7 @@ void io::Parser::initCutLayerWidth()
   }
 }
 
-void io::Parser::getViaRawPriority(frViaDef* viaDef,
+void io::Parser::getViaRawPriority(const frViaDef* viaDef,
                                    viaRawPriorityTuple& priority)
 {
   bool isNotDefaultVia = !(viaDef->getDefault());
@@ -666,11 +651,11 @@ void io::Parser::convertLef58MinCutConstraints()
           = std::make_unique<frMinimumcutConstraint>();
       auto rptr = static_cast<frMinimumcutConstraint*>(uCon.get());
       if (dbRule->isPerCutClass()) {
-        frViaDef* viaDefBelow = nullptr;
+        const frViaDef* viaDefBelow = nullptr;
         if (lNum > bottomLayerNum) {
           viaDefBelow = getTech()->getLayer(lNum - 1)->getDefaultViaDef();
         }
-        frViaDef* viaDefAbove = nullptr;
+        const frViaDef* viaDefAbove = nullptr;
         if (lNum < topLayerNum) {
           viaDefAbove = getTech()->getLayer(lNum + 1)->getDefaultViaDef();
         }
@@ -697,7 +682,8 @@ void io::Parser::convertLef58MinCutConstraints()
       }
 
       if (dbRule->isLengthValid()) {
-        MTSAFEDIST = std::max(MTSAFEDIST, dbRule->getLengthWithinDist());
+        router_cfg_->MTSAFEDIST
+            = std::max(router_cfg_->MTSAFEDIST, dbRule->getLengthWithinDist());
         rptr->setLength(dbRule->getLength(), dbRule->getLengthWithinDist());
       }
       rptr->setWidth(dbRule->getWidth());
@@ -774,7 +760,7 @@ void io::Parser::checkFig(frPinFig* uFig,
     getTrackLocs(true, layer, getBlock(), box.yMin(), box.yMax(), horzTracks);
     getTrackLocs(false, layer, getBlock(), box.xMin(), box.xMax(), vertTracks);
     bool allowWrongWayRouting
-        = (USENONPREFTRACKS && !layer->isUnidirectional());
+        = (router_cfg_->USENONPREFTRACKS && !layer->isUnidirectional());
     if (allowWrongWayRouting) {
       foundTracks |= (!horzTracks.empty() || !vertTracks.empty());
       foundCenterTracks
@@ -824,7 +810,7 @@ void io::Parser::checkFig(frPinFig* uFig,
       getTrackLocs(
           false, layer, getBlock(), gtl::xl(rect), gtl::xh(rect), vertTracks);
       bool allowWrongWayRouting
-          = (USENONPREFTRACKS && !layer->isUnidirectional());
+          = (router_cfg_->USENONPREFTRACKS && !layer->isUnidirectional());
       if (allowWrongWayRouting) {
         foundTracks |= (!horzTracks.empty() || !vertTracks.empty());
       } else {
@@ -848,12 +834,11 @@ void io::Parser::checkPins()
     foundTracks = false;
     foundCenterTracks = false;
     hasPolys = false;
-    dbTransform xform;
     for (auto& pin : bTerm->getPins()) {
       for (auto& uFig : pin->getFigs()) {
         checkFig(uFig.get(),
                  bTerm->getName(),
-                 xform,
+                 dbTransform(),
                  foundTracks,
                  foundCenterTracks,
                  hasPolys);
@@ -874,7 +859,7 @@ void io::Parser::checkPins()
     if (!inst->getMaster()->getMasterType().isBlock()) {
       continue;
     }
-    dbTransform xform = inst->getUpdatedXform();
+    dbTransform xform = inst->getDBTransform();
     for (auto& iTerm : inst->getInstTerms()) {
       if (!iTerm->hasNet() || iTerm->getNet()->isSpecial()) {
         continue;
@@ -914,12 +899,12 @@ void io::Parser::postProcess()
 {
   checkPins();
   initDefaultVias();
-  if (DBPROCESSNODE == "GF14_13M_3Mx_2Cx_4Kx_2Hx_2Gx_LB") {
-    initDefaultVias_GF14(DBPROCESSNODE);
+  if (router_cfg_->DBPROCESSNODE == "GF14_13M_3Mx_2Cx_4Kx_2Hx_2Gx_LB") {
+    initDefaultVias_GF14(router_cfg_->DBPROCESSNODE);
   }
   initCutLayerWidth();
   initConstraintLayerIdx();
-  getTech()->printDefaultVias(logger_);
+  getTech()->printDefaultVias(logger_, router_cfg_);
   instAnalysis();
   convertLef58MinCutConstraints();
   // init region query
@@ -932,7 +917,7 @@ void io::Parser::postProcess()
 // instantiate RPin and region query for RPin
 void io::Parser::initRPin()
 {
-  if (VERBOSE > 0) {
+  if (router_cfg_->VERBOSE > 0) {
     logger_->info(DRT, 185, "Post process initialize RPin region query.");
   }
   initRPin_rpin();

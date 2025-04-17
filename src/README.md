@@ -222,7 +222,7 @@ report_global_connect
 The `report_cell_usage` command is used to print out the usage of cells for each type of cell.
 
 ```
-report_cell_usage [-verbose] [module instance]
+report_cell_usage [-verbose] [module instance] [-file file] [-stage stage]
 ```
 
 ##### Options
@@ -231,6 +231,44 @@ report_cell_usage [-verbose] [module instance]
 | ----- | ----- |
 | `-verbose` | Add information about all leaf instances. |
 | `module instance` | Report cell usage for a specified module instance. |
+| `-file file` | Create cell usage snapshot with the given path to file. |
+| `-stage stage` | Attach the stage to the snapshot. |
+
+#### Report Timing Histogram
+
+The `report_timing_histogram` command reports a visualization of the
+slack distribution in the design.
+
+```tcl
+report_timing_histogram [-num_bins num_bins] [-setup|-hold]
+```
+
+##### Options
+
+| Switch Name | Description |
+| ----- | ----- |
+| `-num_bins` | Number of histogram bins to display (default is 10). |
+| `-setup` | Use setup paths (this is the default). |
+| `-hold` | Use hold paths. |
+
+#### Report Logic Depth Histogram
+
+The `report_logic_depth_histogram` command reports a visualization of the
+logic depth for all constrained endpoints. That is to say, bin the
+one logic depth length for the most timing constrained path for each endpoint.
+This is not necessarily the deepest path for the endpoint.
+
+```tcl
+report_logic_depth_histogram [-num_bins num_bins] [-exclude_buffers] [-exclude_inverters]
+```
+
+##### Options
+
+| Switch Name | Description |
+| ----- | ----- |
+| `-num_bins` | Number of histogram bins to display (default is 10). |
+| `-exclude_buffers` | Exclude buffers when counting critical path length. |
+| `-exclude_inverters` | Exclude inverters when counting critical path length. |
 
 ## TCL functions
 
@@ -240,6 +278,29 @@ Get the die and core areas as a list in microns: `llx lly urx ury`
 ord::get_die_area
 ord::get_core_area
 ```
+
+The `place_inst` command is used to place an instance.  If -cell is
+given then a new instance may be created as well as placed.
+
+```
+place_inst -name inst_name \
+           (-origin xy_origin | -location xy_location) \
+           [-orientation orientation] \
+           [-cell library_cell] \
+           [-status status]
+```
+
+##### Options
+
+| Switch Name | Description |
+| ----- | ----- |
+| `-name` | The name of the instance |
+| `-orientaton` | The orientation of the instance. Default is R0 |
+| `-origin` | The x and y coordinates for where the origin of the instance is placed. |
+| `-location` | The x and y coordinates for where the instance is placed. |
+| `-cell` | Required if a new instance is to be created. |
+| `-status` | The placement status of the instance. Default is PLACED |
+
 
 ## FAQs
 

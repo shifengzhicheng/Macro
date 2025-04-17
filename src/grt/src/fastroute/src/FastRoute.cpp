@@ -1,44 +1,15 @@
-////////////////////////////////////////////////////////////////////////////////
-// Authors: Vitor Bandeira, Eder Matheus Monteiro e Isadora Oliveira
-//          (Advisor: Ricardo Reis)
-//
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, Federal University of Rio Grande do Sul (UFRGS)
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-////////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #include "FastRoute.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <memory>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "AbstractFastRouteRenderer.h"
 #include "DataType.h"
@@ -627,15 +598,14 @@ int FastRouteCore::getEdgeCapacity(int x1, int y1, int x2, int y2, int layer)
 
   if (y1 == y2) {  // horizontal edge
     return h_edges_3D_[k][y1][x1].cap;
-  } else if (x1 == x2) {  // vertical edge
-    return v_edges_3D_[k][y1][x1].cap;
-  } else {
-    logger_->error(
-        GRT,
-        214,
-        "Cannot get edge capacity: edge is not vertical or horizontal.");
-    return 0;
   }
+  if (x1 == x2) {  // vertical edge
+    return v_edges_3D_[k][y1][x1].cap;
+  }
+  logger_->error(
+      GRT,
+      214,
+      "Cannot get edge capacity: edge is not vertical or horizontal.");
 }
 
 int FastRouteCore::getEdgeCapacity(FrNet* net,
@@ -1392,6 +1362,7 @@ NetRouteMap FastRouteCore::run()
   const int numVia = threeDVIA();
   checkRoute3D();
 
+  logger_->metric("global_route__vias", numVia);
   if (verbose_) {
     logger_->info(GRT, 111, "Final number of vias: {}", numVia);
     logger_->info(GRT, 112, "Final usage 3D: {}", (finallength + 3 * numVia));
@@ -1610,8 +1581,8 @@ int FrNet::getLayerEdgeCost(int layer) const
 {
   if (edge_cost_per_layer_)
     return (*edge_cost_per_layer_)[layer];
-  else
-    return 1;
+
+  return 1;
 }
 
 void FrNet::addPin(int x, int y, int layer)

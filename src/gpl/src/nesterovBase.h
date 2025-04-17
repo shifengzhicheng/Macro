@@ -1,45 +1,21 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2018-2020, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE
-// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2018-2025, The OpenROAD Authors
 
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
+#include "gpl/Replace.h"
+#include "odb/db.h"
+#include "placerBase.h"
 #include "point.h"
+#include "routeBase.h"
 
 namespace odb {
 class dbInst;
@@ -66,6 +42,7 @@ class Net;
 
 class GPin;
 class FFT;
+class nesterovDbCbk;
 
 class GCell
 {
@@ -77,16 +54,18 @@ class GCell
   // filler cells
   GCell(int cx, int cy, int dx, int dy);
 
-  Instance* instance() const;
   const std::vector<Instance*>& insts() const { return insts_; }
   const std::vector<GPin*>& gPins() const { return gPins_; }
 
-  void addGPin(GPin* gPin);
+  std::string name() const;
 
-  void setClusteredInstance(const std::vector<Instance*>& insts);
-  void setInstance(Instance* inst);
-  void clearInstances();
-  void setFiller();
+  void addGPin(GPin* gPin);
+  void clearGPins() { gPins_.clear(); }
+
+  void updateLocations();
+
+  bool isLocked() const;
+  void lock();
 
   // normal coordinates
   int lx() const;
@@ -109,7 +88,9 @@ class GCell
   int dDy() const;
 
   void setCenterLocation(int cx, int cy);
+  // void setLocation(int x, int y);
   void setSize(int dx, int dy);
+  void setAllLocations(int lx, int ly, int ux, int uy);
 
   void setDensityLocation(int dLx, int dLy);
   void setDensityCenterLocation(int dCx, int dCy);
@@ -124,10 +105,12 @@ class GCell
   float densityScale() const { return densityScale_; }
 
   bool isInstance() const;
-  bool isClusteredInstance() const;
   bool isFiller() const;
   bool isMacroInstance() const;
   bool isStdInstance() const;
+  bool contains(odb::dbInst* db_inst) const;
+
+  void print(utl::Logger* logger) const;
 
  private:
   std::vector<Instance*> insts_;
@@ -249,6 +232,7 @@ class GNet
   float customWeight() const { return customWeight_; }
 
   void addGPin(GPin* gPin);
+  void clearGPins() { gPins_.clear(); }
   void updateBox();
   int64_t hpwl() const;
 
@@ -281,6 +265,8 @@ class GNet
 
   float waExpMaxSumY() const;
   float waYExpMaxSumY() const;
+
+  void print(utl::Logger* log) const;
 
  private:
   std::vector<GPin*> gPins_;
@@ -474,6 +460,9 @@ class GPin
   void updateLocation(const GCell* gCell);
   void updateDensityLocation(const GCell* gCell);
 
+  void print(utl::Logger* log) const;
+  void updateCoordi();
+
  private:
   GCell* gCell_ = nullptr;
   GNet* gNet_ = nullptr;
@@ -551,16 +540,13 @@ class Bin
   void addNonPlaceAreaUnscaled(int64_t area);
   void addInstPlacedAreaUnscaled(int64_t area);
 
-  const int64_t binArea() const;
-  const int64_t nonPlaceArea() const { return nonPlaceArea_; }
-  const int64_t instPlacedArea() const { return instPlacedArea_; }
-  const int64_t nonPlaceAreaUnscaled() const { return nonPlaceAreaUnscaled_; }
-  const int64_t instPlacedAreaUnscaled() const
-  {
-    return instPlacedAreaUnscaled_;
-  }
+  int64_t binArea() const;
+  int64_t nonPlaceArea() const { return nonPlaceArea_; }
+  int64_t instPlacedArea() const { return instPlacedArea_; }
+  int64_t nonPlaceAreaUnscaled() const { return nonPlaceAreaUnscaled_; }
+  int64_t instPlacedAreaUnscaled() const { return instPlacedAreaUnscaled_; }
 
-  const int64_t fillerArea() const { return fillerArea_; }
+  int64_t fillerArea() const { return fillerArea_; }
 
  private:
   // index
@@ -720,8 +706,8 @@ class BinGrid
   int binSizeX_ = 0;
   int binSizeY_ = 0;
   float targetDensity_ = 0;
-  int64_t overflowArea_ = 0;
-  int64_t overflowAreaUnscaled_ = 0;
+  int64_t sumOverflowArea_ = 0;
+  int64_t sumOverflowAreaUnscaled_ = 0;
   bool isSetBinCnt_ = false;
   int num_threads_ = 1;
 };
@@ -758,19 +744,24 @@ class NesterovPlaceVars
   float minPreconditioner = 1.0;            // MIN_PRE
   float initialPrevCoordiUpdateCoef = 100;  // z_ref_alpha
   float referenceHpwl = 446000000;          // refDeltaHpwl
-  float routabilityCheckOverflow = 0.20;
-  float keepResizeBelowOverflow = 0.0;
+  float routability_end_overflow = 0.30;
+  float keepResizeBelowOverflow = 0.3;
 
   static const int maxRecursionWlCoef = 10;
   static const int maxRecursionInitSLPCoef = 10;
 
   bool timingDrivenMode = true;
-  bool routabilityDrivenMode = true;
+  int timingDrivenIterCounter = 0;
+  bool routability_driven_mode = true;
+  bool disableRevertIfDiverge = false;
+
   bool debug = false;
   int debug_pause_iterations = 10;
   int debug_update_iterations = 10;
   bool debug_draw_bins = true;
   odb::dbInst* debug_inst = nullptr;
+  int debug_start_iter = 0;
+  bool debug_update_db_every_iteration = false;
 
   void reset();
 };
@@ -783,7 +774,8 @@ class NesterovBaseCommon
   NesterovBaseCommon(NesterovBaseVars nbVars,
                      std::shared_ptr<PlacerBaseCommon> pb,
                      utl::Logger* log,
-                     int num_threads);
+                     int num_threads,
+                     const Clusters& clusters);
 
   const std::vector<GCell*>& gCells() const { return gCells_; }
   const std::vector<GNet*>& gNets() const { return gNets_; }
@@ -832,12 +824,35 @@ class NesterovBaseCommon
   // Number of threads of execution
   size_t getNumThreads() { return num_threads_; }
 
+  GCell* getGCellByIndex(size_t i);
+
+  void setCbk(nesterovDbCbk* cbk) { db_cbk_ = cbk; }
+  size_t createGCell(odb::dbInst* db_inst);
+  void createGNet(odb::dbNet* net, bool skip_io_mode);
+  void createITerm(odb::dbITerm* iTerm);
+  void destroyGCell(size_t);
+  void destroyGNet(odb::dbNet*);
+  void destroyITerm(odb::dbITerm*);
+  void resizeGCell(odb::dbInst* db_inst);
+  void moveGCell(odb::dbInst* db_inst);
+  void fixPointers();
+
   GCell& getGCell(size_t index) { return gCellStor_[index]; }
 
   size_t getGCellIndex(const GCell* gCell) const
   {
     return std::distance(gCellStor_.data(), gCell);
   }
+
+  void printGCells();
+  void printGPins();
+
+  // TODO do this for each region? Also, manage this properly if other callbacks
+  // are implemented.
+  int64_t getDeltaArea() { return delta_area_; }
+  void resetDeltaArea() { delta_area_ = 0; }
+  int64_t getNewGcellsCount() { return new_gcells_count_; }
+  void resetNewGcellsCount() { new_gcells_count_ = 0; }
 
  private:
   NesterovBaseVars nbVars_;
@@ -856,7 +871,21 @@ class NesterovBaseCommon
   std::unordered_map<Pin*, GPin*> gPinMap_;
   std::unordered_map<Net*, GNet*> gNetMap_;
 
+  std::unordered_map<odb::dbInst*, size_t> db_inst_map_;
+  std::unordered_map<odb::dbNet*, size_t> db_net_map_;
+  std::unordered_map<odb::dbITerm*, size_t> db_iterm_map_;
+
+  // These three deques should not be required if placerBase allows for dynamic
+  // modifications on its vectors.
+  std::deque<Instance> pb_insts_stor_;
+  std::deque<Net> pb_nets_stor_;
+  std::deque<Pin> pb_pins_stor_;
+
   int num_threads_;
+  int64_t delta_area_;
+  uint new_gcells_count_;
+  bool reprint_iter_header;
+  nesterovDbCbk* db_cbk_{nullptr};
 };
 
 // Stores instances belonging to a specific power domain
@@ -922,6 +951,8 @@ class NesterovBase
   // should be separately defined.
   // This is mainly used for NesterovLoop
   int64_t nesterovInstsArea() const;
+  int64_t getStdInstArea() const { return this->stdInstsArea_; }
+  int64_t getMacroInstArea() const { return this->macroInstsArea_; }
 
   // sum phi and target density
   // used in NesterovPlace
@@ -979,6 +1010,25 @@ class NesterovBase
                        float wlCoeffX,
                        float wlCoeffY);
 
+  void updatePrevGradient(float wlCoeffX, float wlCoeffY);
+  void updateCurGradient(float wlCoeffX, float wlCoeffY);
+  void updateNextGradient(float wlCoeffX, float wlCoeffY);
+
+  // Used for updates based on callbacks
+  void updateSingleGradient(size_t gCellIndex,
+                            std::vector<FloatPoint>& sumGrads,
+                            std::vector<FloatPoint>& wireLengthGrads,
+                            std::vector<FloatPoint>& densityGrads,
+                            float wlCoeffX,
+                            float wlCoeffY);
+
+  void updateSinglePrevGradient(size_t gCellIndex,
+                                float wlCoeffX,
+                                float wlCoeffY);
+  void updateSingleCurGradient(size_t gCellIndex,
+                               float wlCoeffX,
+                               float wlCoeffY);
+
   void updateInitialPrevSLPCoordi();
 
   float getStepLength(const std::vector<FloatPoint>& prevSLPCoordi_,
@@ -987,6 +1037,7 @@ class NesterovBase
                       const std::vector<FloatPoint>& curSLPSumGrads_);
 
   void updateNextIter(int iter);
+  void setTrueReprintIterHeader() { reprint_iter_header = true; }
   float getPhiCoef(float scaledDiffHpwl) const;
   void cutFillerCoordinates();
 
@@ -994,11 +1045,7 @@ class NesterovBase
 
   bool checkConvergence();
   bool checkDivergence();
-  bool revertDivergence();
-
-  void updatePrevGradient(float wlCoeffX, float wlCoeffY);
-  void updateCurGradient(float wlCoeffX, float wlCoeffY);
-  void updateNextGradient(float wlCoeffX, float wlCoeffY);
+  bool revertToSnapshot();
 
   void updateDensityCenterCur();
   void updateDensityCenterCurSLP();
@@ -1014,6 +1061,16 @@ class NesterovBase
   void printStepLength() { printf("stepLength = %f\n", stepLength_); }
 
   bool isDiverged() const { return isDiverged_; }
+
+  void createGCell(odb::dbInst* db_inst, size_t stor_index, RouteBase* rb);
+  void destroyGCell(odb::dbInst* db_inst);
+  void destroyFillerGCell(size_t index_remove);
+
+  // Resets all pointers to storages of gcells, gpins, and gnets.
+  void fixPointers(std::vector<size_t> new_gcells);
+  // Must be called after fixPointers() to initialize internal values of gcells,
+  // including parallel vectors.
+  void updateGCellState(float wlCoeffX, float wlCoeffY);
 
  private:
   NesterovBaseVars nbVars_;
@@ -1039,11 +1096,16 @@ class NesterovBase
   std::vector<GCell*> gCellInsts_;
   std::vector<GCell*> gCellFillers_;
 
+  std::unordered_map<odb::dbInst*, size_t> db_inst_index_map_;
+
+  // used to update gcell states after fixPointers() is called
+  std::vector<odb::dbInst*> new_instances;
+
   float sumPhi_ = 0;
   float targetDensity_ = 0;
   float uniformTargetDensity_ = 0;
 
-  // Nesterov loop data for each region
+  // Nesterov loop data for each region, using parallel vectors
   // SLP is Step Length Prediction.
   //
   // y_st, y_dst, y_wdst, w_pdst
@@ -1092,11 +1154,9 @@ class NesterovBase
 
   // half-parameter-wire-length
   int64_t prevHpwl_ = 0;
+  int64_t prevReportedHpwl_ = 0;
 
-  float isDiverged_ = false;
-
-  std::string divergeMsg_;
-  int divergeCode_ = 0;
+  bool isDiverged_ = false;
 
   NesterovPlaceVars* npVars_;
 
@@ -1106,8 +1166,9 @@ class NesterovBase
   float hpwlWithMinSumOverflow_ = 1e30;
   int iter_ = 0;
   bool isConverged_ = false;
+  bool reprint_iter_header;
 
-  // Snapshot data
+  // Snapshot data for routability, parallel vectors
   std::vector<FloatPoint> snapshotCoordi_;
   std::vector<FloatPoint> snapshotSLPCoordi_;
   std::vector<FloatPoint> snapshotSLPSumGrads_;
@@ -1115,6 +1176,11 @@ class NesterovBase
   float snapshotStepLength_ = 0;
 
   void initFillerGCells();
+
+  void swapAndPop(std::vector<FloatPoint>& vec,
+                  size_t remove_index,
+                  size_t last_index);
+  void swapAndPopParallelVectors(size_t remove_index, size_t last_index);
 };
 
 inline std::vector<Bin>& NesterovBase::bins()
@@ -1153,6 +1219,13 @@ class GCellHandle
   const GCell& operator*() const { return getGCell(); }
   operator const GCell*() const { return &getGCell(); }
 
+  bool isNesterovBaseCommon() const
+  {
+    return std::holds_alternative<NesterovBaseCommon*>(storage_);
+  }
+
+  size_t getIndex() const { return index_; }
+
  private:
   using StorageVariant = std::variant<NesterovBaseCommon*, NesterovBase*>;
 
@@ -1167,5 +1240,11 @@ class GCellHandle
   StorageVariant storage_;
   size_t index_;
 };
+
+inline bool isValidSigType(const odb::dbSigType& db_type)
+{
+  return (db_type == odb::dbSigType::SIGNAL
+          || db_type == odb::dbSigType::CLOCK);
+}
 
 }  // namespace gpl

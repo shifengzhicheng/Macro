@@ -33,6 +33,7 @@ proc define_tool_script { tool script } {
   dict set tool_scripts [string tolower $tool] $script
 }
 
+<<<<<<< HEAD
 # roughly flow order
 define_tool_script "OpenDB" "src/odb/test/regression"
 define_tool_script "dbSta" "src/dbSta/test/regression"
@@ -87,6 +88,8 @@ proc run_tool_tests { tool } {
   }
 }
 
+=======
+>>>>>>> upstream/master
 proc run_flow_tests { } {
   global tool_errors
 
@@ -104,20 +107,11 @@ set tool_errors 0
 
 if { $argv == {} } {
   # Run all tool Unit tests
-  dict for {tool script} $tool_scripts {
-    run_tool_tests $tool
-  }
-  run_openroad_tests
+  puts "Nothing specified"
 } else {
   foreach arg $argv {
     set arg [string tolower $arg]
     set matched 0
-    # openroad
-    if { [string equal -nocase $arg "openroad"] } {
-      run_openroad_tests
-      set matched 1
-    }
-
     # flow
     if { [string equal -nocase $arg "flow"] } {
       run_flow_tests
@@ -134,14 +128,6 @@ if { $argv == {} } {
     }
     if { $ord_tests != {} } {
       incr tool_errors [regression_body $ord_tests]
-    }
-
-    # <tool>
-    dict for {tool script} $tool_scripts {
-      if { [string match -nocase $arg $tool] } {
-	run_tool_tests $tool
-	set matched 1
-      }
     }
 
     if { !$matched } {

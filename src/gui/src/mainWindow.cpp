@@ -1,34 +1,5 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, The Regents of the University of California
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2025, The OpenROAD Authors
 
 #include "mainWindow.h"
 
@@ -45,12 +16,14 @@
 #include <QToolButton>
 #include <QUrl>
 #include <QWidgetAction>
+#include <cmath>
 #include <iomanip>
 #include <map>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "GUIProgress.h"
 #include "browserWidget.h"
 #include "bufferTreeDescriptor.h"
 #include "chartsWidget.h"
@@ -60,6 +33,7 @@
 #include "drcWidget.h"
 #include "globalConnectDialog.h"
 #include "gui/heatMap.h"
+#include "helpWidget.h"
 #include "highlightGroupDialog.h"
 #include "inspector.h"
 #include "layoutTabs.h"
@@ -71,6 +45,7 @@
 #include "staGui.h"
 #include "timingWidget.h"
 #include "utl/Logger.h"
+#include "utl/Progress.h"
 #include "utl/algorithms.h"
 
 // must be loaded in global namespace
@@ -109,6 +84,7 @@ MainWindow::MainWindow(bool load_settings, QWidget* parent)
       hierarchy_widget_(
           new BrowserWidget(viewers_->getModuleSettings(), controls_, this)),
       charts_widget_(new ChartsWidget(this)),
+      help_widget_(new HelpWidget(this)),
       find_dialog_(new FindObjectDialog(this)),
       goto_dialog_(new GotoLocationDialog(this, viewers_))
 {
@@ -131,6 +107,7 @@ MainWindow::MainWindow(bool load_settings, QWidget* parent)
   addDockWidget(Qt::RightDockWidgetArea, drc_viewer_);
   addDockWidget(Qt::RightDockWidgetArea, clock_viewer_);
   addDockWidget(Qt::RightDockWidgetArea, charts_widget_);
+  addDockWidget(Qt::RightDockWidgetArea, help_widget_);
 
   tabifyDockWidget(selection_browser_, script_);
   selection_browser_->hide();
@@ -140,6 +117,8 @@ MainWindow::MainWindow(bool load_settings, QWidget* parent)
   tabifyDockWidget(inspector_, drc_viewer_);
   tabifyDockWidget(inspector_, clock_viewer_);
   tabifyDockWidget(inspector_, charts_widget_);
+  tabifyDockWidget(inspector_, help_widget_);
+
   drc_viewer_->hide();
   clock_viewer_->hide();
 
@@ -248,6 +227,14 @@ MainWindow::MainWindow(bool load_settings, QWidget* parent)
           [=](const SelectionSet& selected) { addHighlighted(selected); });
   connect(
       inspector_, &Inspector::setCommand, script_, &ScriptWidget::setCommand);
+  connect(script_,
+          &ScriptWidget::commandAboutToExecute,
+          inspector_,
+          &Inspector::setReadOnly);
+  connect(script_,
+          &ScriptWidget::commandExecuted,
+          inspector_,
+          &Inspector::unsetReadOnly);
 
   connect(hierarchy_widget_,
           &BrowserWidget::select,
@@ -338,12 +325,10 @@ MainWindow::MainWindow(bool load_settings, QWidget* parent)
           &TimingWidget::setCommand,
           script_,
           &ScriptWidget::setCommand);
-#ifdef ENABLE_CHARTS
   connect(charts_widget_,
           &ChartsWidget::endPointsToReport,
           this,
           &MainWindow::reportSlackHistogramPaths);
-#endif
 
   connect(this, &MainWindow::blockLoaded, this, &MainWindow::setBlock);
   connect(this, &MainWindow::blockLoaded, drc_viewer_, &DRCWidget::setBlock);
@@ -414,10 +399,9 @@ MainWindow::MainWindow(bool load_settings, QWidget* parent)
     settings.endGroup();
   }
 
-  // load resources and set window icon and title
+  // load resources and set window icon
   loadQTResources();
   setWindowIcon(QIcon(":/icon.png"));
-  setWindowTitle(window_title_);
 
   Descriptor::Property::convert_dbu
       = [this](int value, bool add_units) -> std::string {
@@ -439,6 +423,10 @@ MainWindow::~MainWindow()
   gui->unregisterDescriptor<BufferTree>();
   gui->unregisterDescriptor<odb::dbITerm*>();
   gui->unregisterDescriptor<odb::dbMTerm*>();
+
+  if (cli_progress_ != nullptr) {
+    logger_->swapProgress(cli_progress_.release());
+  }
 }
 
 void MainWindow::setDatabase(odb::dbDatabase* db)
@@ -446,13 +434,30 @@ void MainWindow::setDatabase(odb::dbDatabase* db)
   db_ = db;
 }
 
+void MainWindow::setTitle(const std::string& title)
+{
+  window_title_ = title;
+  updateTitle();
+}
+
+void MainWindow::updateTitle()
+{
+  if (!window_title_.empty()) {
+    odb::dbBlock* block = getBlock();
+    if (block != nullptr) {
+      const std::string title
+          = fmt::format("{} - {}", window_title_, block->getName());
+      setWindowTitle(QString::fromStdString(title));
+    } else {
+      setWindowTitle(QString::fromStdString(window_title_));
+    }
+  }
+}
+
 void MainWindow::setBlock(odb::dbBlock* block)
 {
+  updateTitle();
   if (block != nullptr) {
-    const std::string title
-        = fmt::format("{} - {}", window_title_, block->getName());
-    setWindowTitle(QString::fromStdString(title));
-
     save_->setEnabled(true);
   }
   for (auto* heat_map : Gui::get()->getHeatMaps()) {
@@ -461,16 +466,15 @@ void MainWindow::setBlock(odb::dbBlock* block)
   hierarchy_widget_->setBlock(block);
 }
 
-void MainWindow::init(sta::dbSta* sta)
+void MainWindow::init(sta::dbSta* sta, const std::string& help_path)
 {
   // Setup widgets
   timing_widget_->init(sta);
   controls_->setSTA(sta);
   hierarchy_widget_->setSTA(sta);
   clock_viewer_->setSTA(sta);
-#ifdef ENABLE_CHARTS
   charts_widget_->setSTA(sta);
-#endif
+  help_widget_->init(help_path);
 
   // register descriptors
   auto* gui = Gui::get();
@@ -531,17 +535,15 @@ void MainWindow::init(sta::dbSta* sta)
       new DbMarkerCategoryDescriptor(db_));
   gui->registerDescriptor<odb::dbMarker*>(new DbMarkerDescriptor(db_));
 
-  gui->registerDescriptor<sta::Corner*>(new CornerDescriptor(db_, sta));
+  gui->registerDescriptor<sta::Corner*>(new CornerDescriptor(sta));
   gui->registerDescriptor<sta::LibertyLibrary*>(
-      new LibertyLibraryDescriptor(db_, sta));
-  gui->registerDescriptor<sta::LibertyCell*>(
-      new LibertyCellDescriptor(db_, sta));
-  gui->registerDescriptor<sta::LibertyPort*>(
-      new LibertyPortDescriptor(db_, sta));
+      new LibertyLibraryDescriptor(sta));
+  gui->registerDescriptor<sta::LibertyCell*>(new LibertyCellDescriptor(sta));
+  gui->registerDescriptor<sta::LibertyPort*>(new LibertyPortDescriptor(sta));
   gui->registerDescriptor<sta::LibertyPgPort*>(
-      new LibertyPgPortDescriptor(db_, sta));
-  gui->registerDescriptor<sta::Instance*>(new StaInstanceDescriptor(db_, sta));
-  gui->registerDescriptor<sta::Clock*>(new ClockDescriptor(db_, sta));
+      new LibertyPgPortDescriptor(sta));
+  gui->registerDescriptor<sta::Instance*>(new StaInstanceDescriptor(sta));
+  gui->registerDescriptor<sta::Clock*>(new ClockDescriptor(sta));
 
   gui->registerDescriptor<BufferTree>(
       new BufferTreeDescriptor(db_,
@@ -785,6 +787,7 @@ void MainWindow::createMenus()
   windows_menu_->addAction(clock_viewer_->toggleViewAction());
   windows_menu_->addAction(hierarchy_widget_->toggleViewAction());
   windows_menu_->addAction(charts_widget_->toggleViewAction());
+  windows_menu_->addAction(help_widget_->toggleViewAction());
 
   auto option_menu = menuBar()->addMenu("&Options");
   option_menu->addAction(hide_option_);
@@ -1493,14 +1496,16 @@ void MainWindow::postReadDb(odb::dbDatabase* db)
 void MainWindow::setLogger(utl::Logger* logger)
 {
   logger_ = logger;
+
+  auto progress = std::make_unique<GUIProgress>(logger_, this);
+  cli_progress_ = logger_->swapProgress(progress.release());
+
   controls_->setLogger(logger);
   script_->setLogger(logger);
   viewers_->setLogger(logger);
   drc_viewer_->setLogger(logger);
   clock_viewer_->setLogger(logger);
-#ifdef ENABLE_CHARTS
   charts_widget_->setLogger(logger);
-#endif
 }
 
 void MainWindow::fit()
@@ -1741,7 +1746,6 @@ void MainWindow::enableDeveloper()
   show_poly_decomp_view_->setVisible(true);
 }
 
-#ifdef ENABLE_CHARTS
 void MainWindow::reportSlackHistogramPaths(
     const std::set<const sta::Pin*>& report_pins,
     const std::string& path_group_name)
@@ -1758,5 +1762,4 @@ void MainWindow::reportSlackHistogramPaths(
 
   timing_widget_->reportSlackHistogramPaths(report_pins, path_group_name);
 }
-#endif
 }  // namespace gui

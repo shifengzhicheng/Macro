@@ -1,38 +1,21 @@
-/////////////////////////////////////////////////////////////////////////////
-// Copyright (c) 2024, Precision Innovations Inc.
-// All rights reserved.
-//
-// BSD 3-Clause License
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2024-2025, The OpenROAD Authors
+
 #include "GuideProcessor.h"
 
 #include <omp.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <map>
+#include <memory>
+#include <optional>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "db/infra/frTime.h"
 #include "frProfileTask.h"
@@ -62,7 +45,7 @@ std::vector<frRect> getPinShapes(const frBlockObject* pin)
   if (pin->typeId() == frcBTerm) {
     static_cast<const frBTerm*>(pin)->getShapes(pinShapes);
   } else {
-    static_cast<const frInstTerm*>(pin)->getShapes(pinShapes, true);
+    static_cast<const frInstTerm*>(pin)->getShapes(pinShapes);
   }
   return pinShapes;
 }
@@ -75,9 +58,8 @@ std::string getPinName(const frBlockObject* pin)
 {
   if (pin->typeId() == frcBTerm) {
     return static_cast<const frBTerm*>(pin)->getName();
-  } else {
-    return static_cast<const frInstTerm*>(pin)->getName();
   }
+  return static_cast<const frInstTerm*>(pin)->getName();
 }
 /**
  * Returns the preferred access point for required pin.
@@ -112,8 +94,7 @@ std::vector<Point3D> getAccessPoints(const frBlockObject* pin)
   std::vector<Point3D> result;
   if (pin->typeId() == frcInstTerm) {
     auto iterm = static_cast<const frInstTerm*>(pin);
-    auto transform = iterm->getInst()->getTransform();
-    transform.setOrient(odb::dbOrientType::R0);
+    auto transform = iterm->getInst()->getNoRotationTransform();
     const int pin_access_idx = iterm->getInst()->getPinAccessIdx();
     for (const auto& mpin : iterm->getTerm()->getPins()) {
       if (!mpin->hasPinAccess()) {
@@ -434,7 +415,8 @@ bool isValidGuideLayerNum(odb::dbGuide* db_guide,
                           frTechObject* tech,
                           frNet* net,
                           utl::Logger* logger,
-                          frLayerNum& layer_num)
+                          frLayerNum& layer_num,
+                          RouterConfiguration* router_cfg)
 {
   frLayer* layer = tech->getLayer(db_guide->getLayer()->getName());
   if (layer == nullptr) {
@@ -445,12 +427,14 @@ bool isValidGuideLayerNum(odb::dbGuide* db_guide,
 
   // Ignore guide as invalid if above top routing layer for a net with bterms
   // above top routing layer
-  const bool guide_above_top_routing_layer = layer_num > TOP_ROUTING_LAYER;
+  const bool guide_above_top_routing_layer
+      = layer_num > router_cfg->TOP_ROUTING_LAYER;
   if (guide_above_top_routing_layer && net->hasBTermsAboveTopLayer()) {
     return false;
   }
   const bool guide_below_bottom_routing_layer
-      = layer_num < BOTTOM_ROUTING_LAYER && layer_num != VIA_ACCESS_LAYERNUM;
+      = layer_num < router_cfg->BOTTOM_ROUTING_LAYER
+        && layer_num != router_cfg->VIA_ACCESS_LAYERNUM;
   if (guide_below_bottom_routing_layer || guide_above_top_routing_layer) {
     logger->error(DRT,
                   155,
@@ -460,12 +444,12 @@ bool isValidGuideLayerNum(odb::dbGuide* db_guide,
                   net->getName(),
                   layer->getName(),
                   layer_num,
-                  tech->getLayer(BOTTOM_ROUTING_LAYER)->getName(),
-                  BOTTOM_ROUTING_LAYER,
-                  tech->getLayer(TOP_ROUTING_LAYER)->getName(),
-                  TOP_ROUTING_LAYER,
-                  tech->getLayer(VIA_ACCESS_LAYERNUM)->getName(),
-                  VIA_ACCESS_LAYERNUM);
+                  tech->getLayer(router_cfg->BOTTOM_ROUTING_LAYER)->getName(),
+                  router_cfg->BOTTOM_ROUTING_LAYER,
+                  tech->getLayer(router_cfg->TOP_ROUTING_LAYER)->getName(),
+                  router_cfg->TOP_ROUTING_LAYER,
+                  tech->getLayer(router_cfg->VIA_ACCESS_LAYERNUM)->getName(),
+                  router_cfg->VIA_ACCESS_LAYERNUM);
   }
   return true;
 }
@@ -701,6 +685,17 @@ void addTouchingGuidesBridges(TrackIntervalsByLayer& intvs, utl::Logger* logger)
   }
 }
 
+std::vector<int> getVisitedIndices(const std::set<int>& indices,
+                                   const std::vector<bool>& visited)
+{
+  std::vector<int> visited_indices;
+  std::copy_if(indices.begin(),
+               indices.end(),
+               std::back_inserter(visited_indices),
+               [&visited](int idx) { return visited[idx]; });
+  return visited_indices;
+}
+
 }  // namespace
 
 bool GuideProcessor::readGuides()
@@ -718,7 +713,8 @@ bool GuideProcessor::readGuides()
         logger_->error(DRT, 352, "Input route guides are congested.");
       }
       frLayerNum layer_num;
-      if (!isValidGuideLayerNum(db_guide, getTech(), net, logger_, layer_num)) {
+      if (!isValidGuideLayerNum(
+              db_guide, getTech(), net, logger_, layer_num, router_cfg_)) {
         continue;
       }
       frRect rect;
@@ -729,7 +725,7 @@ bool GuideProcessor::readGuides()
       logGuidesRead(num_guides, logger_);
     }
   }
-  if (VERBOSE > 0) {
+  if (router_cfg_->VERBOSE > 0) {
     logger_->report("");
     logger_->info(utl::DRT, 157, "Number of guides:     {}", num_guides);
     logger_->report("");
@@ -913,7 +909,7 @@ void GuideProcessor::buildGCellPatterns()
     ygp.setCount((dieBox.yMax() - startCoordY) / (frCoord) GCELLGRIDY);
   }
 
-  if (VERBOSE > 0 || logger_->debugCheck(DRT, "autotuner", 1)) {
+  if (router_cfg_->VERBOSE > 0 || logger_->debugCheck(DRT, "autotuner", 1)) {
     logger_->info(DRT,
                   176,
                   "GCELLGRID X {} DO {} STEP {} ;",
@@ -986,7 +982,6 @@ void GuideProcessor::patchGuides(frNet* net,
   // no guide was found that overlaps with any of the pin shapes, then we patch
   // the guides
 
-  const std::string name = getPinName(pin);
   const Point3D best_pin_loc_idx
       = findBestPinLocation(getDesign(), pin, guides);
   // The x/y/z coordinates of best_pin_loc_idx
@@ -1182,7 +1177,7 @@ void GuideProcessor::genGuides_split(
         auto end_idx = intv.upper();
         std::set<frCoord> split_indices;
         // hardcode layerNum <= VIA_ACCESS_LAYERNUM not used for GR
-        if (via_access_only && layer_num <= VIA_ACCESS_LAYERNUM) {
+        if (via_access_only && layer_num <= router_cfg_->VIA_ACCESS_LAYERNUM) {
           // split by pin
           split::splitByPins(pin_helper,
                              layer_num,
@@ -1239,8 +1234,20 @@ void GuideProcessor::genGuides_split(
                                 rects);
           } else {
             auto curr_idx_it = split_indices.begin();
+            split::addSplitRect(track_idx,
+                                *curr_idx_it,
+                                *curr_idx_it,
+                                layer_num,
+                                is_horizontal,
+                                rects);
             auto prev_idx_it = curr_idx_it++;
             while (curr_idx_it != split_indices.end()) {
+              split::addSplitRect(track_idx,
+                                  *curr_idx_it,
+                                  *curr_idx_it,
+                                  layer_num,
+                                  is_horizontal,
+                                  rects);
               split::addSplitRect(track_idx,
                                   *prev_idx_it,
                                   *curr_idx_it,
@@ -1324,8 +1331,7 @@ void GuideProcessor::genGuides_addCoverGuide_helper(frInstTerm* iterm,
 {
   const frInst* inst = iterm->getInst();
   const size_t num_pins = iterm->getTerm()->getPins().size();
-  dbTransform transform = inst->getTransform();
-  transform.setOrient(dbOrientType(dbOrientType::R0));
+  dbTransform transform = inst->getNoRotationTransform();
   for (int pin_idx = 0; pin_idx < num_pins; pin_idx++) {
     const frAccessPoint* pref_ap = getPrefAp(iterm, pin_idx);
     if (pref_ap) {
@@ -1362,12 +1368,12 @@ std::vector<std::pair<frBlockObject*, Point>> GuideProcessor::genGuides(
   coverPins(net, rects);
 
   int size = (int) getTech()->getLayers().size();
-  if (TOP_ROUTING_LAYER < std::numeric_limits<int>::max()
-      && TOP_ROUTING_LAYER >= 0) {
-    size = std::min(size, TOP_ROUTING_LAYER + 1);
+  if (router_cfg_->TOP_ROUTING_LAYER < std::numeric_limits<int>::max()
+      && router_cfg_->TOP_ROUTING_LAYER >= 0) {
+    size = std::min(size, router_cfg_->TOP_ROUTING_LAYER + 1);
   }
   TrackIntervalsByLayer intvs(size);
-  if (DBPROCESSNODE == "GF14_13M_3Mx_2Cx_4Kx_2Hx_2Gx_LB") {
+  if (router_cfg_->DBPROCESSNODE == "GF14_13M_3Mx_2Cx_4Kx_2Hx_2Gx_LB") {
     genGuides_addCoverGuide(net, rects);
   }
   genGuides_prep(rects, intvs);
@@ -1425,8 +1431,13 @@ std::vector<std::pair<frBlockObject*, Point>> GuideProcessor::genGuides(
         }
       }
     }
-    GuidePathFinder path_finder(
-        design_, logger_, net, force_pin_feed_through, rects, pin_gcell_map);
+    GuidePathFinder path_finder(design_,
+                                logger_,
+                                router_cfg_,
+                                net,
+                                force_pin_feed_through,
+                                rects,
+                                pin_gcell_map);
     path_finder.setAllowWarnings(i != 0);
     if (path_finder.traverseGraph()) {
       return path_finder.commitPathToGuides(rects, pin_gcell_map);
@@ -1442,14 +1453,18 @@ std::vector<std::pair<frBlockObject*, Point>> GuideProcessor::genGuides(
 GuidePathFinder::GuidePathFinder(
     frDesign* design,
     Logger* logger,
+    RouterConfiguration* router_cfg,
     frNet* net,
     const bool force_feed_through,
     const std::vector<frRect>& rects,
     const frBlockObjectMap<std::set<Point3D>>& pin_gcell_map)
     : design_(design),
       logger_(logger),
+      router_cfg_(router_cfg),
       net_(net),
-      force_feed_through_(force_feed_through)
+      force_feed_through_(force_feed_through),
+      pin_gcell_map_(pin_gcell_map),
+      rects_(rects)
 {
   buildNodeMap(rects, pin_gcell_map);
   constructAdjList();
@@ -1593,17 +1608,25 @@ void GuidePathFinder::clipGuides(std::vector<frRect>& rects)
 
 void GuidePathFinder::mergeGuides(std::vector<frRect>& rects)
 {
+  auto hasVisitedIndices = [this](const Point3D& pt) {
+    if (node_map_.find(pt) == node_map_.end()) {
+      return false;
+    }
+    const auto& indices = getVisitedIndices(node_map_.at(pt), visited_);
+    return !indices.empty();
+  };
   for (auto& [pt, indices] : node_map_) {
-    std::vector<int> visited_indices;
-    std::copy_if(indices.begin(),
-                 indices.end(),
-                 std::back_inserter(visited_indices),
-                 [this](int idx) { return visited_[idx]; });
+    std::vector<int> visited_indices = getVisitedIndices(indices, visited_);
     const uint num_indices = visited_indices.size();
     if (num_indices == 2) {
       const auto first_idx = *(visited_indices.begin());
       const auto second_idx = *std::prev(visited_indices.end());
       if (!isGuideIdx(first_idx) || !isGuideIdx(second_idx)) {
+        continue;
+      }
+      // Check if there is a connection to upper or lower layer
+      if (hasVisitedIndices(Point3D(pt, pt.z() + 2))
+          || hasVisitedIndices(Point3D(pt, pt.z() - 2))) {
         continue;
       }
       auto& rect1 = rects[first_idx];
@@ -1696,7 +1719,7 @@ void GuidePathFinder::constructAdjList()
           // no M1 cross-gcell routing allowed
           // BX200307: in general VIA_ACCESS_LAYER should not be used (instead
           // of 0)
-          if (layer_num != VIA_ACCESS_LAYERNUM) {
+          if (layer_num != router_cfg_->VIA_ACCESS_LAYERNUM) {
             adj_list_[idx1].push_back(idx2);
             adj_list_[idx2].push_back(idx1);
           }
@@ -1704,7 +1727,7 @@ void GuidePathFinder::constructAdjList()
           // one pin, one gcell
           auto guide_idx = std::min(idx1, idx2);
           auto pin_idx = std::max(idx1, idx2);
-          if (ALLOW_PIN_AS_FEEDTHROUGH || isForceFeedThrough()) {
+          if (router_cfg_->ALLOW_PIN_AS_FEEDTHROUGH || isForceFeedThrough()) {
             adj_list_[pin_idx].push_back(guide_idx);
             adj_list_[guide_idx].push_back(pin_idx);
           } else {
@@ -1743,8 +1766,8 @@ GuidePathFinder::getInitSearchQueue()
     // push every visited node into pq
     for (int i = 0; i < getNodeCount(); i++) {
       if (is_on_path_[i]) {
-        if (ALLOW_PIN_AS_FEEDTHROUGH && isPinIdx(i)) {
-          // penalize feedthrough in normal mode
+        if (router_cfg_->ALLOW_PIN_AS_FEEDTHROUGH && isPinIdx(i)) {
+          // TODO: set cost to 0
           queue.push({i, prev_idx_[i], 2});
         } else if (isForceFeedThrough() && isPinIdx(i)) {
           // penalize feedthrough in fallback mode
@@ -1783,8 +1806,14 @@ bool GuidePathFinder::traverseGraph()
       // visit other nodes
       for (auto neighbor_idx : adj_list_[curr_wavefront.node_idx]) {
         if (!visited_[neighbor_idx]) {
-          queue.push(
-              {neighbor_idx, curr_wavefront.node_idx, curr_wavefront.cost + 1});
+          int cost = 1;
+          if (!isPinIdx(neighbor_idx)) {
+            cost += rects_[neighbor_idx].getBBox().dx()
+                    + rects_[neighbor_idx].getBBox().dy();
+          }
+          queue.push({neighbor_idx,
+                      curr_wavefront.node_idx,
+                      curr_wavefront.cost + cost});
         }
       }
     }
@@ -1938,7 +1967,7 @@ void GuideProcessor::processGuides()
   }
   frTime t;
   ProfileTask profile("IO:postProcessGuide");
-  if (VERBOSE > 0) {
+  if (router_cfg_->VERBOSE > 0) {
     logger_->info(DRT, 169, "Post process guides.");
   }
   buildGCellPatterns();
@@ -1953,7 +1982,7 @@ void GuideProcessor::processGuides()
     net->setOrigGuides(rects);
     net_to_gr_pins[net];
   }
-  omp_set_num_threads(MAX_THREADS);
+  omp_set_num_threads(router_cfg_->MAX_THREADS);
   utl::ThreadException exception;
 #pragma omp parallel for
   for (int i = 0; i < nets_to_guides.size(); i++) {
@@ -1964,7 +1993,7 @@ void GuideProcessor::processGuides()
 #pragma omp critical
       {
         cnt++;
-        if (VERBOSE > 0) {
+        if (router_cfg_->VERBOSE > 0) {
           if (cnt < 1000000) {
             if (cnt % 100000 == 0) {
               logger_->report("  complete {} nets.", cnt);
@@ -2001,11 +2030,11 @@ void GuideProcessor::processGuides()
   logger_->info(DRT, 179, "Init gr pin query.");
   getDesign()->getRegionQuery()->initGRPin(all_gr_pins);
 
-  if (VERBOSE > 0) {
+  if (router_cfg_->VERBOSE > 0) {
     t.print(logger_);
   }
-  if (!SAVE_GUIDE_UPDATES) {
-    if (VERBOSE > 0) {
+  if (!router_cfg_->SAVE_GUIDE_UPDATES) {
+    if (router_cfg_->VERBOSE > 0) {
       logger_->info(DRT, 245, "skipped writing guide updates to database.");
     }
   } else {

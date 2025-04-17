@@ -10,14 +10,11 @@ _versionCompare() {
     test $a "$2" $b
 }
 _equivalenceDeps() {
-    yosysVersion=yosys-0.43
+    yosysVersion=v0.51
 
     # yosys
     yosysPrefix=${PREFIX:-"/usr/local"}
     if [[ ! $(command -v yosys) || ! $(command -v yosys-config)  ]]; then (
-        if [[ -f /opt/rh/llvm-toolset-7.0/enable ]]; then
-            source /opt/rh/llvm-toolset-7.0/enable
-        fi
         cd "${baseDir}"
         git clone --depth=1 -b "${yosysVersion}" --recursive https://github.com/YosysHQ/yosys
         cd yosys
@@ -30,9 +27,6 @@ _equivalenceDeps() {
     # eqy
     eqyPrefix=${PREFIX:-"/usr/local"}
     if ! command -v eqy &> /dev/null; then (
-        if [[ -f /opt/rh/llvm-toolset-7.0/enable ]]; then
-            source /opt/rh/llvm-toolset-7.0/enable
-        fi
         cd "${baseDir}"
         git clone --depth=1 -b "${yosysVersion}" https://github.com/YosysHQ/eqy
         cd eqy
@@ -45,9 +39,6 @@ _equivalenceDeps() {
     # sby
     sbyPrefix=${PREFIX:-"/usr/local"}
     if ! command -v sby &> /dev/null; then (
-        if [[ -f /opt/rh/llvm-toolset-7.0/enable ]]; then
-            source /opt/rh/llvm-toolset-7.0/enable
-        fi
         cd "${baseDir}"
         git clone --depth=1 -b "${yosysVersion}" --recursive https://github.com/YosysHQ/sby
         cd sby
@@ -73,16 +64,17 @@ _installCommonDev() {
     pcreChecksum="37d2f77cfd411a3ddf1c64e1d72e43f7"
     swigVersion=4.1.0
     swigChecksum="794433378154eb61270a3ac127d9c5f3"
-    boostVersionBig=1.80
+    boostVersionBig=1.86
     boostVersionSmall=${boostVersionBig}.0
-    boostChecksum="077f074743ea7b0cb49c6ed43953ae95"
+    boostChecksum="ac857d73bb754b718a039830b07b9624"
     eigenVersion=3.4
     cuddVersion=3.0.0
     lemonVersion=1.3.1
-    spdlogVersion=1.8.1
+    spdlogVersion=1.15.0
     gtestVersion=1.13.0
     gtestChecksum="a1279c6fb5bf7d4a5e0d0b2a4adb39ac"
-
+    bisonVersion=3.8.2
+    bisonChecksum="1e541a097cda9eca675d29dd2832921f"
 
     rm -rf "${baseDir}"
     mkdir -p "${baseDir}"
@@ -102,6 +94,26 @@ _installCommonDev() {
     else
         echo "CMake already installed."
     fi
+
+    # bison
+    bisonInstalledVersion="none"
+    bisonPrefix=${PREFIX:-"/usr"}
+    if [ -f ${bisonPrefix}/bin/bison ]; then
+        bisonInstalledVersion=$(${bisonPrefix}/bin/bison --version | awk 'NR==1 {print $NF}')
+    fi
+    if [ ${bisonInstalledVersion} != ${bisonVersion} ]; then
+        cd "${baseDir}"
+        eval wget https://ftp.gnu.org/gnu/bison/bison-${bisonVersion}.tar.gz
+        md5sum -c <(echo "${bisonChecksum} bison-${bisonVersion}.tar.gz") || exit 1
+        tar xf bison-${bisonVersion}.tar.gz
+        cd bison-${bisonVersion}
+        ./configure --prefix=${bisonPrefix}
+        make -j install
+        echo "bison ${bisonVersion} installed (from ${bisonInstalledVersion})."
+    else
+        echo "bison ${bisonVersion} already installed."
+    fi
+    CMAKE_PACKAGE_ROOT_ARGS+=" -D bison_ROOT=$(realpath ${bisonPrefix}) "
 
     # SWIG
     swigPrefix=${PREFIX:-"/usr/local"}
@@ -132,11 +144,10 @@ _installCommonDev() {
 
     # boost
     boostPrefix=${PREFIX:-"/usr/local"}
-    if [[ -z $(grep "BOOST_LIB_VERSION \"${boostVersionBig//./_}\"" ${boostPrefix}/include/boost/version.hpp) ]]; then
+    if [[ -z $(grep "BOOST_LIB_VERSION \"${boostVersionBig//./_}\"" ${boostPrefix}/include/boost/version.hpp 2> /dev/null) ]]; then
         cd "${baseDir}"
         boostVersionUnderscore=${boostVersionSmall//./_}
-        eval wget https://sourceforge.net/projects/boost/files/boost/${boostVersionSmall}/boost_${boostVersionUnderscore}.tar.gz
-        # eval wget https://boostorg.jfrog.io/artifactory/main/release/${boostVersionSmall}/source/boost_${boostVersionUnderscore}.tar.gz
+        eval wget https://archives.boost.io/release/${boostVersionSmall}/source/boost_${boostVersionUnderscore}.tar.gz
         md5sum -c <(echo "${boostChecksum}  boost_${boostVersionUnderscore}.tar.gz") || exit 1
         tar -xf boost_${boostVersionUnderscore}.tar.gz
         cd boost_${boostVersionUnderscore}
@@ -186,7 +197,7 @@ _installCommonDev() {
 
     # lemon
     lemonPrefix=${PREFIX:-"/usr/local"}
-    if [[ -z $(grep "LEMON_VERSION \"${lemonVersion}\"" ${lemonPrefix}/include/lemon/config.h) ]]; then
+    if [[ -z $(grep "LEMON_VERSION \"${lemonVersion}\"" ${lemonPrefix}/include/lemon/config.h 2> /dev/null) ]]; then
         cd "${baseDir}"
         git clone --depth=1 -b ${lemonVersion} https://github.com/The-OpenROAD-Project/lemon-graph.git
         cd lemon-graph
@@ -199,14 +210,19 @@ _installCommonDev() {
 
     # spdlog
     spdlogPrefix=${PREFIX:-"/usr/local"}
-    if [[ ! -d ${spdlogPrefix}/include/spdlog ]]; then
+    spdlogInstalledVersion="none"
+    if [ -d ${spdlogPrefix}/include/spdlog ]; then
+        spdlogInstalledVersion=$(grep "#define SPDLOG_VER_" ${spdlogPrefix}/include/spdlog/version.h | sed 's/.*\s//' | tr '\n' '.' | sed 's/\.$//')
+    fi
+    if [ ${spdlogInstalledVersion} != ${spdlogVersion} ]; then
         cd "${baseDir}"
         git clone --depth=1 -b "v${spdlogVersion}" https://github.com/gabime/spdlog.git
         cd spdlog
         ${cmakePrefix}/bin/cmake -DCMAKE_INSTALL_PREFIX="${spdlogPrefix}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DSPDLOG_BUILD_EXAMPLE=OFF -B build .
         ${cmakePrefix}/bin/cmake --build build -j $(nproc) --target install
+        echo "spdlog ${spdlogVersion} installed (from ${spdlogInstalledVersion})."
     else
-        echo "spdlog already installed."
+        echo "spdlog ${spdlogVersion} already installed."
     fi
     CMAKE_PACKAGE_ROOT_ARGS+=" -D spdlog_ROOT=$(realpath $spdlogPrefix) "
 
@@ -262,10 +278,10 @@ EOF
 
 _installOrTools() {
     os=$1
-    version=$2
+    osVersion=$2
     arch=$3
-    orToolsVersionBig=9.10
-    orToolsVersionSmall=${orToolsVersionBig}.4067
+    orToolsVersionBig=9.11
+    orToolsVersionSmall=${orToolsVersionBig}.4210
 
     rm -rf "${baseDir}"
     mkdir -p "${baseDir}"
@@ -274,7 +290,7 @@ _installOrTools() {
 
     # Disable exit on error for 'find' command, as it might return non zero
     set +euo pipefail
-    LIST=($(find / -type f -name "libortools.so*" 2>/dev/null))
+    LIST=($(find /local* /opt* /lib* /usr* /bin* -type f -name "libortools.so*" 2>/dev/null))
     # Bring back exit on error
     set -euo pipefail
     # Return if right version of or-tools is installed
@@ -295,10 +311,10 @@ _installOrTools() {
         ${cmakePrefix}/bin/cmake -S. -Bbuild -DBUILD_DEPS:BOOL=ON -DBUILD_EXAMPLES:BOOL=OFF -DBUILD_SAMPLES:BOOL=OFF -DBUILD_TESTING:BOOL=OFF -DCMAKE_INSTALL_PREFIX=${orToolsPath} -DCMAKE_CXX_FLAGS="-w" -DCMAKE_C_FLAGS="-w"
         ${cmakePrefix}/bin/cmake --build build --config Release --target install -v -j $(nproc)
     else
-        if [[ $version == rodete ]]; then
-            version=11
+        if [[ $osVersion == rodete ]]; then
+            osVersion=11
         fi
-        orToolsFile=or-tools_${arch}_${os}-${version}_cpp_v${orToolsVersionSmall}.tar.gz
+        orToolsFile=or-tools_${arch}_${os}-${osVersion}_cpp_v${orToolsVersionSmall}.tar.gz
         eval wget https://github.com/google/or-tools/releases/download/v${orToolsVersionBig}/${orToolsFile}
         if command -v brew &> /dev/null; then
             orToolsPath="$(brew --prefix or-tools)"
@@ -336,6 +352,7 @@ _installUbuntuPackages() {
         groff \
         lcov \
         libffi-dev \
+        libfl-dev \
         libgomp1 \
         libomp-dev \
         libpcre2-dev \
@@ -388,17 +405,12 @@ _installRHELCleanUp() {
 
 _installRHELPackages() {
     arch=amd64
-    version=3.1.11.1
+    pandocVersion=3.1.11.1
 
     yum -y update
-    if [[ $(yum repolist | egrep -c "rhel-8-for-x86_64-appstream-rpms") -eq 0 ]]; then
-        yum -y install http://mirror.centos.org/centos/8-stream/BaseOS/x86_64/os/Packages/centos-gpg-keys-8-6.el8.noarch.rpm
-        yum -y install http://mirror.centos.org/centos/8-stream/BaseOS/x86_64/os/Packages/centos-stream-repos-8-6.el8.noarch.rpm
-        rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial
-    fi
     yum -y install tzdata
     yum -y install redhat-rpm-config rpm-build
-    yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+    yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
     yum -y install \
         autoconf \
         automake \
@@ -409,11 +421,11 @@ _installRHELPackages() {
         gdb \
         git \
         glibc-devel \
-        libtool \
         libffi-devel \
-        llvm7.0 \
-        llvm7.0-devel \
-        llvm7.0-libs \
+        libtool \
+        llvm \
+        llvm-devel \
+        llvm-libs \
         make \
         pcre-devel \
         pcre2-devel \
@@ -424,10 +436,9 @@ _installRHELPackages() {
         python3-devel \
         python3-pip \
         qt5-qtbase-devel \
+        qt5-qtcharts-devel \
         qt5-qtimageformats \
         readline \
-        readline-devel \
-        tcl-devel \
         tcl-tclreadline \
         tcl-tclreadline-devel \
         tcl-thread-devel \
@@ -436,65 +447,13 @@ _installRHELPackages() {
         zlib-devel
 
     yum install -y \
-        http://repo.okay.com.mx/centos/8/x86_64/release/bison-3.0.4-10.el8.x86_64.rpm \
-        https://forensics.cert.org/centos/cert/7/x86_64/flex-2.6.1-9.el7.x86_64.rpm
+        https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/flex-2.6.4-9.el9.x86_64.rpm \
+        https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/readline-devel-8.1-4.el9.x86_64.rpm \
+        https://rpmfind.net/linux/centos-stream/9-stream/AppStream/x86_64/os/Packages/tcl-devel-8.6.10-7.el9.x86_64.rpm
 
-    eval wget https://github.com/jgm/pandoc/releases/download/${version}/pandoc-${version}-linux-${arch}.tar.gz
-    tar xvzf pandoc-${version}-linux-${arch}.tar.gz --strip-components 1 -C /usr/local/
-    rm -rf pandoc-${version}-linux-${arch}.tar.gz
-}
-
-_installCentosCleanUp() {
-    yum clean -y all
-    rm -rf /var/lib/apt/lists/*
-}
-
-_installCentosPackages() {
-    yum update -y
-    yum install -y tzdata
-    yum groupinstall -y "Development Tools"
-    if ! command -v lcov &> /dev/null; then
-        yum install -y http://downloads.sourceforge.net/ltp/lcov-1.14-1.noarch.rpm
-    fi
-    if ! command -v yum list installed ius-release &> /dev/null; then
-        yum install -y https://repo.ius.io/ius-release-el7.rpm
-    fi
-    if ! command -v yum list installed epel-release &> /dev/null; then
-        yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-    fi
-    yum install -y centos-release-scl
-    yum install -y \
-        devtoolset-8 \
-        devtoolset-8-libatomic-devel \
-        groff \
-        libffi-devel \
-        libgomp \
-        libstdc++ \
-        llvm-toolset-7.0 \
-        llvm-toolset-7.0-libomp-devel \
-        pandoc \
-        pcre-devel \
-        pcre2-devel \
-        python-devel \
-        python36 \
-        python36-devel \
-        python36-libs \
-        python36-pip \
-        qt5-qtbase-devel \
-        qt5-qtimageformats \
-        readline-devel \
-        rh-python38-python \
-        rh-python38-python-libs \
-        rh-python38-python-pip \
-        rh-python38-scldevel \
-        tcl \
-        tcl-devel \
-        tcl-tclreadline \
-        tcl-tclreadline-devel \
-        tcllib \
-        wget \
-        ccache \
-        zlib-devel
+    eval wget https://github.com/jgm/pandoc/releases/download/${pandocVersion}/pandoc-${pandocVersion}-linux-${arch}.tar.gz
+    tar xvzf pandoc-${pandocVersion}-linux-${arch}.tar.gz --strip-components 1 -C /usr/local/
+    rm -rf pandoc-${pandocVersion}-linux-${arch}.tar.gz
 }
 
 _installOpenSuseCleanUp() {
@@ -580,7 +539,7 @@ Run the following command to install them:
   xcode-select --install
 Then, rerun this script.
 EOF
-    exit 1
+        exit 1
     fi
     brew install bison boost cmake eigen flex fmt groff libomp or-tools pandoc pyqt5 python spdlog tcl-tk zlib
 
@@ -624,6 +583,7 @@ _installDebianPackages() {
         groff \
         lcov \
         libffi-dev \
+        libfl-dev \
         libgomp1 \
         libomp-dev \
         libpcre2-dev \
@@ -643,6 +603,7 @@ _installDebianPackages() {
     if [[ $1 == 10 ]]; then
         apt-get install -y --no-install-recommends \
             libpython3.7 \
+            libqt5charts5-dev \
             qt5-default
 
     else
@@ -653,6 +614,7 @@ _installDebianPackages() {
         fi
         apt-get install -y --no-install-recommends \
             libpython${pythonver} \
+            libqt5charts5-dev \
             qtbase5-dev \
             qtchooser \
             qt5-qmake \
@@ -699,10 +661,12 @@ _installCI() {
         containerd.io \
         docker-buildx-plugin
 
-    # Install clang for C++20 support
-    wget https://apt.llvm.org/llvm.sh
-    chmod +x llvm.sh
-    ./llvm.sh 16 all
+    if _versionCompare ${1} -lt 24.04; then
+        # Install clang for C++20 support
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        ./llvm.sh 16 all
+    fi
 
 }
 
@@ -717,15 +681,15 @@ _checkIsLocal() {
 _help() {
     cat <<EOF
 
-Usage: $0
+Usage: $0 -all
                                 # Installs all of OpenROAD's dependencies no
                                 #     need to run -base or -common. Requires
                                 #     privileged access.
-                                #
        $0 -base
                                 # Installs OpenROAD's dependencies using
                                 #     package managers (-common must be
-                                #     executed in another command).
+                                #     executed in another command). Requires
+                                #     privileged access.
        $0 -common
                                 # Installs OpenROAD's common dependencies
                                 #     (-base must be executed in another
@@ -761,7 +725,7 @@ EOF
 
 # Default values
 PREFIX=""
-option="all"
+option="none"
 isLocal="false"
 equivalenceDeps="no"
 CI="no"
@@ -781,14 +745,20 @@ while [ "$#" -gt 0 ]; do
         -dev|-development)
             echo "The use of this flag is deprecated and will be removed soon."
             ;;
+        -all)
+            if [[ "${option}" != "none" ]]; then
+                echo "WARNING: previous argument -${option} will be overwritten with -all." >&2
+            fi
+            option="all"
+            ;;
         -base)
-            if [[ "${option}" != "all" ]]; then
+            if [[ "${option}" != "none" ]]; then
                 echo "WARNING: previous argument -${option} will be overwritten with -base." >&2
             fi
             option="base"
             ;;
         -common)
-            if [[ "${option}" != "all" ]]; then
+            if [[ "${option}" != "none" ]]; then
                 echo "WARNING: previous argument -${option} will be overwritten with -common." >&2
             fi
             option="common"
@@ -844,6 +814,11 @@ while [ "$#" -gt 0 ]; do
     shift 1
 done
 
+if [[ "${option}" == "none" ]]; then
+    echo "You must use one of: -all|-base|-common" >&2
+    _help
+fi
+
 if [[ -z "${saveDepsPrefixes}" ]]; then
     DIR="$(dirname $(readlink -f $0))"
     saveDepsPrefixes="$DIR/openroad_deps_prefixes.txt"
@@ -873,50 +848,39 @@ case "${platform}" in
 esac
 
 case "${os}" in
-    "CentOS Linux" )
-        if [[ ${CI} == "yes" ]]; then
-            echo "WARNING: Installing CI dependencies is only supported on Ubuntu 22.04" >&2
-        fi
-        if [[ "${option}" == "base" || "${option}" == "all" ]]; then
-            _checkIsLocal
-            _installCentosPackages
-            _installCentosCleanUp
-        fi
-        if [[ "${option}" == "common" || "${option}" == "all" ]]; then
-            _installCommonDev
-            _installOrTools "centos" "7" "amd64"
-        fi
-        cat <<EOF
-To enable Python 3.8 (required for eqy) you need to run:
-    source /opt/rh/rh-python38/enable
-To enable GCC-8 or Clang-7 you need to run:
-    source /opt/rh/devtoolset-8/enable
-    source /opt/rh/llvm-toolset-7.0/enable
-EOF
-        ;;
     "Ubuntu" )
-        version=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | sed 's/"//g')
+        ubuntuVersion=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | sed 's/"//g')
         if [[ ${CI} == "yes" ]]; then
-            _installCI
+            _installCI "${ubuntuVersion}"
         fi
         if [[ "${option}" == "base" || "${option}" == "all" ]]; then
             _checkIsLocal
-            _installUbuntuPackages "${version}"
+            _installUbuntuPackages "${ubuntuVersion}"
             _installUbuntuCleanUp
         fi
         if [[ "${option}" == "common" || "${option}" == "all" ]]; then
             _installCommonDev
-            if _versionCompare ${version} -gt 24.04; then
-                version=24.04
-            elif _versionCompare ${version} -gt 22.04; then
-                version=22.04
+            # set version for non LTS
+            if _versionCompare ${ubuntuVersion} -gt 24.04; then
+                ubuntuVersion=24.04
+            elif _versionCompare ${ubuntuVersion} -gt 22.04; then
+                ubuntuVersion=22.04
             else
-                version=20.04
+                ubuntuVersion=20.04
             fi
-            _installOrTools "ubuntu" "${version}" "amd64"
+            _installOrTools "ubuntu" "${ubuntuVersion}" "amd64"
         fi
         ;;
-    "Red Hat Enterprise Linux")
+    "Red Hat Enterprise Linux" | "Rocky Linux")
+    if [[ "${os}" == "Red Hat Enterprise Linux" ]]; then
+        rhelVersion=$(rpm -q --queryformat '%{VERSION}' redhat-release | cut -d. -f1)
+    elif  [[ "${os}" == "Rocky Linux" ]]; then
+        rhelVersion=$(rpm -q --queryformat '%{VERSION}' rocky-release | cut -d. -f1)
+    fi
+        if [[ "${rhelVersion}" != "9" ]]; then
+            echo "ERROR: Unsupported ${rhelVersion} version. Only '9' is supported."
+            exit 1
+        fi
         if [[ ${CI} == "yes" ]]; then
             echo "WARNING: Installing CI dependencies is only supported on Ubuntu 22.04" >&2
         fi
@@ -927,7 +891,7 @@ EOF
         fi
         if [[ "${option}" == "common" || "${option}" == "all" ]]; then
             _installCommonDev
-            _installOrTools "centos" "8" "amd64"
+            _installOrTools "rockylinux" "9" "amd64"
         fi
         ;;
     "Darwin" )
@@ -962,21 +926,21 @@ To enable GCC-11 you need to run:
 EOF
         ;;
     "Debian GNU/Linux" | "Debian GNU/Linux rodete" )
-        version=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | sed 's/"//g')
-        if [[ -z ${version} ]]; then
-            version=$(awk -F= '/^VERSION_CODENAME/{print $2}' /etc/os-release | sed 's/"//g')
+        debianVersion=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | sed 's/"//g')
+        if [[ -z ${debianVersion} ]]; then
+            debianVersion=$(awk -F= '/^VERSION_CODENAME/{print $2}' /etc/os-release | sed 's/"//g')
         fi
         if [[ ${CI} == "yes" ]]; then
             echo "WARNING: Installing CI dependencies is only supported on Ubuntu 22.04" >&2
         fi
         if [[ "${option}" == "base" || "${option}" == "all" ]]; then
             _checkIsLocal
-            _installDebianPackages "${version}"
+            _installDebianPackages "${debianVersion}"
             _installDebianCleanUp
         fi
         if [[ "${option}" == "common" || "${option}" == "all" ]]; then
             _installCommonDev
-            _installOrTools "debian" "${version}" "amd64"
+            _installOrTools "debian" "${debianVersion}" "amd64"
         fi
         ;;
     *)

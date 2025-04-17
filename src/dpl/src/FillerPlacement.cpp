@@ -1,41 +1,12 @@
-/////////////////////////////////////////////////////////////////////////////
-//
-// Copyright (c) 2020, The Regents of the University of California
-// All rights reserved.
-//
-// BSD 3-Clause License
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-///////////////////////////////////////////////////////////////////////////////
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2025, The OpenROAD Authors
 
 #include <algorithm>
+#include <limits>
+#include <utility>
 
-#include "Grid.h"
-#include "Objects.h"
+#include "dpl/Grid.h"
+#include "dpl/Objects.h"
 #include "dpl/Opendp.h"
 #include "utl/Logger.h"
 
@@ -75,7 +46,9 @@ Opendp::MasterByImplant Opendp::splitByImplant(dbMasterSeq* filler_masters)
   return mapping;
 }
 
-void Opendp::fillerPlacement(dbMasterSeq* filler_masters, const char* prefix)
+void Opendp::fillerPlacement(dbMasterSeq* filler_masters,
+                             const char* prefix,
+                             bool verbose)
 {
   if (cells_.empty()) {
     importDb();
@@ -92,7 +65,7 @@ void Opendp::fillerPlacement(dbMasterSeq* filler_masters, const char* prefix)
   }
 
   gap_fillers_.clear();
-  filler_count_ = 0;
+  filler_count_.clear();
   initGrid();
   setGridCells();
 
@@ -100,12 +73,33 @@ void Opendp::fillerPlacement(dbMasterSeq* filler_masters, const char* prefix)
     placeRowFillers(row, prefix, filler_masters_by_implant);
   }
 
-  logger_->info(DPL, 1, "Placed {} filler instances.", filler_count_);
+  int filler_count = 0;
+  int max_filler_master = 0;
+  for (const auto& [master, count] : filler_count_) {
+    filler_count += count;
+    max_filler_master = std::max(max_filler_master, count);
+  }
+  logger_->info(DPL, 1, "Placed {} filler instances.", filler_count);
+
+  if (verbose) {
+    logger_->report("Filler usage:");
+    int max_master_len = 0;
+    for (const auto& [master, count] : filler_count_) {
+      max_master_len = std::max(max_master_len,
+                                static_cast<int>(master->getName().size()));
+    }
+    const int count_offset = fmt::format("{}", max_filler_master).size();
+    for (const auto& [master, count] : filler_count_) {
+      const int line_offset
+          = count_offset + max_master_len - master->getName().size();
+      logger_->report("  {}: {:>{}}", master->getName(), count, line_offset);
+    }
+  }
 }
 
 void Opendp::setGridCells()
 {
-  for (Cell& cell : cells_) {
+  for (Node& cell : cells_) {
     grid_->visitCellPixels(
         cell, false, [&](Pixel* pixel) { setGridCell(cell, pixel); });
   }
@@ -118,8 +112,8 @@ std::pair<dbSite*, dbOrientType> Opendp::fillSite(Pixel* pixel)
   dbSite* selected_site = nullptr;
   dbOrientType selected_orient;
   DbuY min_height{std::numeric_limits<int>::max()};
-  for (auto [site, orient] : pixel->sites) {
-    DbuY site_height{static_cast<int>(site->getHeight())};
+  for (const auto& [site, orient] : pixel->sites) {
+    DbuY site_height{site->getHeight()};
     if (site_height < min_height) {
       min_height = site_height;
       selected_site = site;
@@ -154,13 +148,13 @@ void Opendp::placeRowFillers(GridY row,
     dbTechLayer* implant = nullptr;
     if (j > 0) {
       auto pixel = grid_->gridPixel(j - 1, row);
-      if (pixel->cell && pixel->cell->db_inst_) {
-        implant = getImplant(pixel->cell->db_inst_->getMaster());
+      if (pixel->cell && pixel->cell->getDbInst()) {
+        implant = getImplant(pixel->cell->getDbInst()->getMaster());
       }
     } else if (k < row_site_count) {
       auto pixel = grid_->gridPixel(k, row);
-      if (pixel->cell && pixel->cell->db_inst_) {
-        implant = getImplant(pixel->cell->db_inst_->getMaster());
+      if (pixel->cell && pixel->cell->getDbInst()) {
+        implant = getImplant(pixel->cell->getDbInst()->getMaster());
       }
     } else {  // totally empty row - use anything
       implant = filler_masters_by_implant.begin()->first;
@@ -186,7 +180,8 @@ void Opendp::placeRowFillers(GridY row,
       debugPrint(
           logger_, DPL, "filler", 2, "fillers size is {}.", fillers.size());
       for (dbMaster* master : fillers) {
-        string inst_name = prefix + to_string(row.v) + "_" + to_string(k.v);
+        std::string inst_name
+            = prefix + to_string(row.v) + "_" + to_string(k.v);
         dbInst* inst = dbInst::create(block_,
                                       master,
                                       inst_name.c_str(),
@@ -197,7 +192,7 @@ void Opendp::placeRowFillers(GridY row,
         inst->setLocation(x.v, y.v);
         inst->setPlacementStatus(dbPlacementStatus::PLACED);
         inst->setSourceType(odb::dbSourceType::DIST);
-        filler_count_++;
+        filler_count_[master]++;
         k += master->getWidth() / site_width.v;
       }
       j += gap;
@@ -214,9 +209,9 @@ const char* Opendp::gridInstName(GridY row, GridX col)
     return "core_right";
   }
 
-  const Cell* cell = grid_->gridPixel(col, row)->cell;
+  const auto cell = grid_->gridPixel(col, row)->cell;
   if (cell) {
-    return cell->db_inst_->getConstName();
+    return cell->getDbInst()->getConstName();
   }
   return "?";
 }

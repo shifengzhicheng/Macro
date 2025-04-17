@@ -1,61 +1,16 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, Nefelus Inc
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2019-2025, The OpenROAD Authors
 
 #include "odb/dbTypes.h"
 
 #include <cctype>
 #include <cstring>
+#include <optional>
+#include <string>
 
 #include "odb/dbId.h"
 
 namespace odb {
-
-//
-// dbIdValidation methods here
-//
-bool dbIdValidation::isId(const char* inid)
-{
-  if (!inid) {
-    return false;
-  }
-
-  for (; *inid; inid++) {
-    if (isdigit(*inid) == 0) {
-      return false;
-    }
-  }
-
-  return true;
-}
 
 std::optional<dbOrientType::Value> dbOrientType::fromString(const char* orient)
 {
@@ -229,30 +184,20 @@ bool dbOrientType::isRightAngleRotation() const
 dbGDSSTrans::dbGDSSTrans()
 {
   _flipX = false;
-  _absMag = false;
-  _absAngle = false;
   _mag = 1.0;
   _angle = 0.0;
 }
 
-dbGDSSTrans::dbGDSSTrans(bool flipX,
-                         bool absMag,
-                         bool absAngle,
-                         double mag,
-                         double angle)
+dbGDSSTrans::dbGDSSTrans(bool flipX, double mag, double angle)
 {
   _flipX = flipX;
-  _absMag = absMag;
-  _absAngle = absAngle;
   _mag = mag;
   _angle = angle;
 }
 
 bool dbGDSSTrans::operator==(const dbGDSSTrans& rhs) const
 {
-  return (_flipX == rhs._flipX) && (_absMag == rhs._absMag)
-         && (_absAngle == rhs._absAngle) && (_mag == rhs._mag)
-         && (_angle == rhs._angle);
+  return (_flipX == rhs._flipX) && (_mag == rhs._mag) && (_angle == rhs._angle);
 }
 
 std::string dbGDSSTrans::to_string() const
@@ -261,9 +206,9 @@ std::string dbGDSSTrans::to_string() const
   if (_flipX) {
     s += std::string("FLIP_X ");
   }
-  s += (_absMag) ? std::string("ABS_MAG ") : std::string("MAG ");
-  s += std::to_string(_mag) + " ";
-  s += (_absAngle) ? std::string("ABS_ANGLE ") : std::string("ANGLE ");
+  s += "MAG ";
+  s += std::to_string(_mag);
+  s += " ANGLE ";
   s += std::to_string(_angle);
   s += " ";
   return s;
@@ -271,8 +216,7 @@ std::string dbGDSSTrans::to_string() const
 
 bool dbGDSSTrans::identity() const
 {
-  return (!_flipX) && (!_absMag) && (!_absAngle) && (_mag == 1.0)
-         && (_angle == 0.0);
+  return (!_flipX) && (_mag == 1.0) && (_angle == 0.0);
 }
 
 dbGDSTextPres::dbGDSTextPres()
@@ -307,8 +251,6 @@ std::string dbGDSTextPres::to_string() const
 dbIStream& operator>>(dbIStream& stream, dbGDSSTrans& t)
 {
   stream >> t._flipX;
-  stream >> t._absMag;
-  stream >> t._absAngle;
   stream >> t._mag;
   stream >> t._angle;
   return stream;
@@ -317,8 +259,6 @@ dbIStream& operator>>(dbIStream& stream, dbGDSSTrans& t)
 dbOStream& operator<<(dbOStream& stream, const dbGDSSTrans t)
 {
   stream << t._flipX;
-  stream << t._absMag;
-  stream << t._absAngle;
   stream << t._mag;
   stream << t._angle;
   return stream;
@@ -673,12 +613,9 @@ bool dbPlacementStatus::isFixed() const
 
 dbMasterType::dbMasterType(const char* value)
 {
-  _value = NONE;
+  _value = CORE;
 
-  if (strcasecmp(value, "NONE") == 0) {
-    _value = NONE;
-
-  } else if (strcasecmp(value, "COVER") == 0) {
+  if (strcasecmp(value, "COVER") == 0) {
     _value = COVER;
 
   } else if (strcasecmp(value, "COVER BUMP") == 0) {
@@ -804,7 +741,7 @@ dbMasterType::dbMasterType(Value value)
 
 dbMasterType::dbMasterType()
 {
-  _value = NONE;
+  _value = CORE;
 }
 
 dbMasterType::dbMasterType(const dbMasterType& value)
@@ -817,10 +754,6 @@ const char* dbMasterType::getString() const
   const char* value = "";
 
   switch (_value) {
-    case NONE:
-      value = "NONE";
-      break;
-
     case COVER:
       value = "COVER";
       break;
@@ -988,7 +921,6 @@ bool dbMasterType::isBlock() const
     case BLOCK_BLACKBOX:
     case BLOCK_SOFT:
       return true;
-    case NONE:
     case COVER:
     case COVER_BUMP:
     case RING:
@@ -1042,7 +974,6 @@ bool dbMasterType::isCore() const
     case CORE_ANTENNACELL:
     case CORE_WELLTAP:
       return true;
-    case NONE:
     case COVER:
     case COVER_BUMP:
     case RING:
@@ -1092,7 +1023,6 @@ bool dbMasterType::isPad() const
     case PAD_SPACER:
     case PAD_AREAIO:
       return true;
-    case NONE:
     case COVER:
     case COVER_BUMP:
     case RING:
@@ -1154,7 +1084,6 @@ bool dbMasterType::isEndCap() const
     case ENDCAP_LEF58_RIGHTTOPCORNER:
     case ENDCAP_LEF58_LEFTTOPCORNER:
       return true;
-    case NONE:
     case COVER:
     case COVER_BUMP:
     case RING:
@@ -1187,7 +1116,6 @@ bool dbMasterType::isCover() const
     case COVER:
     case COVER_BUMP:
       return true;
-    case NONE:
     case RING:
     case BLOCK:
     case BLOCK_BLACKBOX:

@@ -1,40 +1,17 @@
-/* Author: Matt Liberty */
-/*
- * Copyright (c) 2020, The Regents of the University of California
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the University nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2025, The OpenROAD Authors
 
 #include "FlexDR_graphics.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <limits>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "../gc/FlexGC.h"
 #include "FlexDR.h"
-#include "ord/OpenRoad.hh"
 
 namespace drt {
 
@@ -185,7 +162,7 @@ gui::Descriptor::Properties GridGraphDescriptor::getProperties(
     costs.push_back(
         {name + " total cost",
          graph->getCosts(
-             x, y, z, dir, layer, data.graph->getNDR() != nullptr)});
+             x, y, z, dir, layer, data.graph->getNDR() != nullptr, false)});
   }
   props.insert(props.end(), costs.begin(), costs.end());
   return props;
@@ -755,13 +732,13 @@ void FlexDRGraphics::endNet(drNet* net)
   net_ = nullptr;
 }
 
-void FlexDRGraphics::startIter(int iter)
+void FlexDRGraphics::startIter(int iter, RouterConfiguration* router_cfg)
 {
   current_iter_ = iter;
   if (iter >= settings_->iter) {
-    if (MAX_THREADS > 1) {
+    if (router_cfg->MAX_THREADS > 1) {
       logger_->info(DRT, 207, "Setting MAX_THREADS=1 for use with the DR GUI.");
-      MAX_THREADS = 1;
+      router_cfg->MAX_THREADS = 1;
     }
 
     status("Start iter: " + std::to_string(iter));
@@ -799,7 +776,6 @@ bool FlexDRGraphics::guiActive()
   return gui::Gui::enabled();
 }
 
-/* static */
 void FlexDRGraphics::init()
 {
   if (guiActive()) {

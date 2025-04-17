@@ -1,46 +1,19 @@
-///////////////////////////////////////////////////////////////////////////////
-// BSD 3-Clause License
-//
-// Copyright (c) 2024, Precision Innovations Inc.
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice, this
-//   list of conditions and the following disclaimer.
-//
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-//
-// * Neither the name of the copyright holder nor the names of its
-//   contributors may be used to endorse or promote products derived from
-//   this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2024-2025, The OpenROAD Authors
 
 #include "staDescriptors.h"
 
 #include <QInputDialog>
 #include <QStringList>
 #include <boost/algorithm/string.hpp>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <memory>
 #include <queue>
 #include <regex>
 #include <sstream>
+#include <string>
 
 #include "db_sta/dbNetwork.hh"
 #include "db_sta/dbSta.hh"
@@ -97,9 +70,7 @@ static void add_limit(Descriptor::Properties& props,
 
 //////////////////////////////////////////////////
 
-LibertyLibraryDescriptor::LibertyLibraryDescriptor(odb::dbDatabase* db,
-                                                   sta::dbSta* sta)
-    : db_(db), sta_(sta)
+LibertyLibraryDescriptor::LibertyLibraryDescriptor(sta::dbSta* sta) : sta_(sta)
 {
 }
 
@@ -255,9 +226,7 @@ bool LibertyLibraryDescriptor::getAllObjects(SelectionSet& objects) const
 
 //////////////////////////////////////////////////
 
-LibertyCellDescriptor::LibertyCellDescriptor(odb::dbDatabase* db,
-                                             sta::dbSta* sta)
-    : db_(db), sta_(sta)
+LibertyCellDescriptor::LibertyCellDescriptor(sta::dbSta* sta) : sta_(sta)
 {
 }
 
@@ -397,9 +366,7 @@ bool LibertyCellDescriptor::getAllObjects(SelectionSet& objects) const
 
 //////////////////////////////////////////////////
 
-LibertyPortDescriptor::LibertyPortDescriptor(odb::dbDatabase* db,
-                                             sta::dbSta* sta)
-    : db_(db), sta_(sta)
+LibertyPortDescriptor::LibertyPortDescriptor(sta::dbSta* sta) : sta_(sta)
 {
 }
 
@@ -592,9 +559,7 @@ static const char* typeNameStr(sta::LibertyPgPort::PgType type)
   return "<unexpected>";
 }
 
-LibertyPgPortDescriptor::LibertyPgPortDescriptor(odb::dbDatabase* db,
-                                                 sta::dbSta* sta)
-    : db_(db), sta_(sta)
+LibertyPgPortDescriptor::LibertyPgPortDescriptor(sta::dbSta* sta) : sta_(sta)
 {
 }
 
@@ -689,8 +654,7 @@ odb::dbMTerm* LibertyPgPortDescriptor::getMTerm(const std::any& object) const
   return mterm;
 }
 
-CornerDescriptor::CornerDescriptor(odb::dbDatabase* db, sta::dbSta* sta)
-    : db_(db), sta_(sta)
+CornerDescriptor::CornerDescriptor(sta::dbSta* sta) : sta_(sta)
 {
 }
 
@@ -756,9 +720,7 @@ bool CornerDescriptor::getAllObjects(SelectionSet& objects) const
   return true;
 }
 
-StaInstanceDescriptor::StaInstanceDescriptor(odb::dbDatabase* db,
-                                             sta::dbSta* sta)
-    : db_(db), sta_(sta)
+StaInstanceDescriptor::StaInstanceDescriptor(sta::dbSta* sta) : sta_(sta)
 {
 }
 
@@ -827,7 +789,7 @@ Descriptor::Properties StaInstanceDescriptor::getProperties(
       clocks.insert(gui->makeSelected(clock));
     }
 
-    auto power = sta_->findClkedActivity(pin);
+    auto power = sta_->activity(pin);
 
     bool is_lib_port = false;
     std::any port_id;
@@ -844,7 +806,7 @@ Descriptor::Properties StaInstanceDescriptor::getProperties(
 
     if (is_lib_port) {
       const std::string freq
-          = Descriptor::convertUnits(power.activity(), false, float_precision_);
+          = Descriptor::convertUnits(power.density(), false, float_precision_);
       const std::string activity_info = fmt::format("{:.2f}% at {}Hz from {}",
                                                     100 * power.duty(),
                                                     freq,
@@ -858,9 +820,9 @@ Descriptor::Properties StaInstanceDescriptor::getProperties(
           = is_inf(setup_arrival)
                 ? "None"
                 : fmt::format(
-                    "{} {}",
-                    timeunit->asString(setup_arrival, float_precision_),
-                    timeunit->scaledSuffix());
+                      "{} {}",
+                      timeunit->asString(setup_arrival, float_precision_),
+                      timeunit->scaledSuffix());
       port_arrival_setup.push_back({port_id, setup_text});
       const auto hold_arrival
           = sta_->pinArrival(pin, nullptr, sta::MinMax::min());
@@ -868,9 +830,9 @@ Descriptor::Properties StaInstanceDescriptor::getProperties(
           = is_inf(hold_arrival)
                 ? "None"
                 : fmt::format(
-                    "{} {}",
-                    timeunit->asString(hold_arrival, float_precision_),
-                    timeunit->scaledSuffix());
+                      "{} {}",
+                      timeunit->asString(hold_arrival, float_precision_),
+                      timeunit->scaledSuffix());
       port_arrival_hold.push_back({port_id, hold_text});
     }
   }
@@ -924,8 +886,7 @@ bool StaInstanceDescriptor::getAllObjects(SelectionSet& objects) const
   return true;
 }
 
-ClockDescriptor::ClockDescriptor(odb::dbDatabase* db, sta::dbSta* sta)
-    : db_(db), sta_(sta)
+ClockDescriptor::ClockDescriptor(sta::dbSta* sta) : sta_(sta)
 {
 }
 

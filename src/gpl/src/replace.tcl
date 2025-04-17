@@ -1,35 +1,5 @@
-###############################################################################
-## BSD 3-Clause License
-##
-## Copyright (c) 2018-2020, The Regents of the University of California
-## All rights reserved.
-##
-## Redistribution and use in source and binary forms, with or without
-## modification, are permitted provided that the following conditions are met:
-##
-## * Redistributions of source code must retain the above copyright notice, this
-##   list of conditions and the following disclaimer.
-##
-## * Redistributions in binary form must reproduce the above copyright notice,
-##   this list of conditions and the following disclaimer in the documentation
-##   and#or other materials provided with the distribution.
-##
-## * Neither the name of the copyright holder nor the names of its
-##   contributors may be used to endorse or promote products derived from
-##   this software without specific prior written permission.
-##
-## THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-## AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-## IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-## ARE
-## DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-## FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-## DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-## SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-## CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-## OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-## OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-###############################################################################
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2018-2025, The OpenROAD Authors
 
 sta::define_cmd_args "global_placement" {\
     [-skip_initial_place]\
@@ -54,7 +24,6 @@ sta::define_cmd_args "global_placement" {\
     [-routability_target_rc_metric routability_target_rc_metric]\
     [-routability_check_overflow routability_check_overflow]\
     [-routability_max_density routability_max_density]\
-    [-routability_max_bloat_iter routability_max_bloat_iter]\
     [-routability_max_inflation_iter routability_max_inflation_iter]\
     [-routability_inflation_ratio_coef routability_inflation_ratio_coef]\
     [-routability_max_inflation_ratio routability_max_inflation_ratio]\
@@ -65,6 +34,7 @@ sta::define_cmd_args "global_placement" {\
     [-timing_driven_nets_percentage timing_driven_nets_percentage]\
     [-pad_left pad_left]\
     [-pad_right pad_right]\
+    [-disable_revert_if_diverge]\
 }
 
 proc global_placement { args } {
@@ -75,7 +45,7 @@ proc global_placement { args } {
       -reference_hpwl \
       -initial_place_max_iter -initial_place_max_fanout \
       -routability_check_overflow -routability_max_density \
-      -routability_max_bloat_iter -routability_max_inflation_iter \
+      -routability_max_inflation_iter \
       -routability_target_rc_metric \
       -routability_inflation_ratio_coef \
       -routability_max_inflation_ratio \
@@ -93,7 +63,8 @@ proc global_placement { args } {
       -disable_timing_driven \
       -disable_routability_driven \
       -skip_io \
-      -incremental}
+      -incremental\
+      -disable_revert_if_diverge}
 
   # flow control for initial_place
   if { [info exists flags(-skip_initial_place)] } {
@@ -129,7 +100,7 @@ proc global_placement { args } {
     if { [info exists keys(-timing_driven_net_reweight_overflow)] } {
       set overflow_list $keys(-timing_driven_net_reweight_overflow)
     } else {
-      set overflow_list [list 79 64 49 29 21 15]
+      set overflow_list [list 79 64 29 21 15]
     }
 
     foreach overflow $overflow_list {
@@ -175,6 +146,14 @@ proc global_placement { args } {
       utl::warn "GPL" 152 \
         "Using GRT FastRoute instead of default RUDY for congestion in routability driven."
     }
+  }
+
+  # Disable revert to saved snapshot if a divergence is detected.
+  set disable_revert_if_diverge [info exists flags(-disable_revert_if_diverge)]
+  gpl::set_disable_revert_if_diverge $disable_revert_if_diverge
+  if { $disable_revert_if_diverge } {
+    utl::info "GPL" 153 \
+      "Revert-to-snapshot on divergence detection is disabled."
   }
 
   if { [info exists keys(-initial_place_max_fanout)] } {
@@ -262,13 +241,6 @@ proc global_placement { args } {
     gpl::set_routability_check_overflow_cmd $routability_check_overflow
   }
 
-  # routability bloat iter
-  if { [info exists keys(-routability_max_bloat_iter)] } {
-    set routability_max_bloat_iter $keys(-routability_max_bloat_iter)
-    sta::check_positive_float "-routability_max_bloat_iter" $routability_max_bloat_iter
-    gpl::set_routability_max_bloat_iter_cmd $routability_max_bloat_iter
-  }
-
   # routability inflation iter
   if { [info exists keys(-routability_max_inflation_iter)] } {
     set routability_max_inflation_iter $keys(-routability_max_inflation_iter)
@@ -351,7 +323,7 @@ proc cluster_flops { args } {
     flags {}
 
   if { [ord::get_db_block] == "NULL" } {
-    utl::error GPL 104 "No design block found."
+    utl::error GPL 113 "No design block found."
   }
 
   set tray_weight 32.0
@@ -380,11 +352,11 @@ proc cluster_flops { args } {
 
 proc global_placement_debug { args } {
   sta::parse_key_args "global_placement_debug" args \
-    keys {-pause -update -inst} \
-    flags {-draw_bins -initial} ;# checker off
+    keys {-pause -update -inst -start_iter} \
+    flags {-draw_bins -initial -update_db} ;# checker off
 
   if { [ord::get_db_block] == "NULL" } {
-    utl::error GPL 105 "No design block found."
+    utl::error GPL 117 "No design block found."
   }
 
   set pause 10
@@ -404,16 +376,47 @@ proc global_placement_debug { args } {
     set inst $keys(-inst)
   }
 
+  set start_iter 0
+  if { [info exists keys(-start_iter)] } {
+    set start_iter $keys(-start_iter)
+    sta::check_positive_integer "-start_iter" $start_iter
+  }
+
   set draw_bins [info exists flags(-draw_bins)]
   set initial [info exists flags(-initial)]
+  set update_db [info exists flags(-update_db)]
 
-  gpl::set_debug_cmd $pause $update $draw_bins $initial $inst
+  gpl::set_debug_cmd $pause $update $draw_bins $initial $inst $start_iter $update_db
+}
+
+sta::define_cmd_args "placement_cluster" {}
+
+proc placement_cluster { args } {
+  sta::parse_key_args "placement_cluster" args \
+    keys {} \
+    flags {}
+
+  if { $args == {} } {
+    utl::error GPL 94 "placement_cluster requires a list of instances."
+  }
+
+  if { [llength $args] == 1 } {
+    set args [lindex $args 0]
+  }
+
+  set insts []
+  foreach inst_name $args {
+    lappend insts {*}[gpl::parse_inst_names placement_cluster $inst_name]
+  }
+  utl::info GPL 96 "Created placement cluster of [llength $insts] instances."
+
+  gpl::placement_cluster_cmd $insts
 }
 
 namespace eval gpl {
 proc get_global_placement_uniform_density { args } {
   if { [ord::get_db_block] == "NULL" } {
-    utl::error GPL 106 "No design block found."
+    utl::error GPL 114 "No design block found."
   }
 
   sta::parse_key_args "get_global_placement_uniform_density" args \
@@ -448,5 +451,19 @@ proc get_global_placement_uniform_density { args } {
     utl::error GPL 131 "No rows defined in design. Use initialize_floorplan to add rows."
   }
   return $uniform_density
+}
+
+proc parse_inst_names { cmd names } {
+  set dbBlock [ord::get_db_block]
+  set inst_list {}
+  foreach inst [get_cells $names] {
+    lappend inst_list [sta::sta_to_db_inst $inst]
+  }
+
+  if { [llength $inst_list] == 0 } {
+    utl::error GPL 95 "Instances {$names} for $cmd command were not found."
+  }
+
+  return $inst_list
 }
 }

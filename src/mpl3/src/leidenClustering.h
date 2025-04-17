@@ -66,6 +66,7 @@ class leidenClustering
   void set_iteration(int iteration) { iteration_ = iteration; }
   void set_resolution(double resolution) { resolution_ = resolution; }
   void set_large_net_threshold(int threshold) { large_net_threshold_ = threshold; }
+  void set_random_seed(int seed) { igraph_set_rng_seed(seed); }
   size_t get_cluster_count() { return max_cluster_id_ + 1; }
  private:
   sta::dbNetwork* network_{nullptr};

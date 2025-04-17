@@ -32,12 +32,10 @@
 ## POSSIBILITY OF SUCH DAMAGE.
 
 include("openroad")
-# list(APPEND CMAKE_INSTALL_RPATH "/home/maple_of_ten/Desktop/OpenROAD-flow-scripts/dependencies/lib")
-# list(APPEND CMAKE_PREFIX_PATH "/home/maple_of_ten/Desktop/OpenROAD-flow-scripts/dependencies/lib/cmake")
-# list(APPEND CMAKE_LIBRARY_PATH "/home/maple_of_ten/Desktop/OpenROAD-flow-scripts/dependencies/lib")
 find_package(ortools REQUIRED)
 find_package(libleidenalg REQUIRED)
 find_package(igraph REQUIRED)
+find_package(OpenMP REQUIRED)
 
 add_library(mpl3_lib
   src/rtl_mp.cpp
@@ -49,6 +47,7 @@ add_library(mpl3_lib
   src/bus_synthesis.cpp
   src/clusterEngine.cpp
   src/leidenClustering.cpp
+  src/optimiser.cpp
 )
 
 target_include_directories(mpl3_lib
@@ -60,6 +59,7 @@ target_link_libraries(mpl3_lib
     utl_lib
     igraph::igraph
     libleidenalg::libleidenalg
+    OpenMP::OpenMP_CXX
     dbSta_lib
     OpenSTA
     odb
